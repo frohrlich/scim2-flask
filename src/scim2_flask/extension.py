@@ -14,6 +14,9 @@ from flask import url_for
 from pydantic import ValidationError
 from scim2_models import AuthenticationScheme
 from scim2_models import Bulk
+from scim2_models import BulkOperation
+from scim2_models import BulkRequest
+from scim2_models import BulkResponse
 from scim2_models import ChangePassword
 from scim2_models import Context
 from scim2_models import Error
@@ -41,6 +44,17 @@ from .storage import ResourceNotFoundError
 from .storage import ScimStorage
 
 EXTENSION_NAME = "scim2"
+
+
+class PayloadTooLargeException(SCIMException):
+    """A bulk job beyond the limits the service provider announces.
+
+    :rfc:`RFC7644 §3.7.4 <7644#section-3.7.4>` answers 413 here, a status
+    the scimType table of §3.12 does not cover, so the hierarchy
+    scim2-models exposes is extended with it.
+    """
+
+    status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
 
 
 class SCIM2:
@@ -126,6 +140,7 @@ class SCIM2:
             self._register_resource_routes(blueprint, resource_type)
 
         self._register_discovery_routes(blueprint)
+        self._register_bulk_route(blueprint)
 
         def not_found_view(_path: str) -> Any:
             raise NotFound()
@@ -412,6 +427,169 @@ class SCIM2:
                     return schema.model_dump(scim_ctx=Context.RESOURCE_QUERY_RESPONSE)
             raise ResourceNotFoundError(Schema, schema_id)
 
+    def _register_bulk_route(self, blueprint: Blueprint) -> None:
+        # Adapted from the "Bulk jobs" and "POST /Bulk" sections of the
+        # scim2-models integration guides:
+        # https://scim2-models.readthedocs.io/en/latest/integrations/helpers.html#bulk-jobs
+        # https://scim2-models.readthedocs.io/en/latest/integrations/flask.html#post-bulk
+        @blueprint.post("/Bulk")
+        def bulk() -> Any:
+            config = self.get_service_provider_config().bulk
+            # RFC7644 §3.7.4: "The service provider MUST define the
+            # maximum number of operations and maximum payload size a
+            # client may send in a single request. [...] If either limit
+            # is exceeded, the service provider MUST return HTTP response
+            # code 413 (Payload Too Large)."
+            payload_size = request.content_length
+            if payload_size is None:
+                payload_size = len(request.data)
+            if (
+                config.max_payload_size is not None
+                and payload_size > config.max_payload_size
+            ):
+                raise PayloadTooLargeException(
+                    detail=(
+                        "The size of the bulk operation exceeds the "
+                        f"maxPayloadSize ({config.max_payload_size})."
+                    )
+                )
+
+            bulk_request = BulkRequest[self._resource_union()].model_validate_json(
+                request.data, scim_ctx=Context.BULK_REQUEST
+            )
+            operations = bulk_request.operations or []
+            # RFC7644 §3.7.4: "A job holding more operations than
+            # maxOperations is refused whole with a 413."
+            if (
+                config.max_operations is not None
+                and len(operations) > config.max_operations
+            ):
+                raise PayloadTooLargeException(
+                    detail=(
+                        "The number of operations exceeds the "
+                        f"maxOperations ({config.max_operations})."
+                    )
+                )
+
+            results = []
+            errors = 0
+            for operation in operations:
+                result = self._run_bulk_operation(operation)
+                results.append(result)
+                if result.status is not None and result.status < HTTPStatus.BAD_REQUEST:
+                    continue
+                # RFC7644 §3.7.3: a job performs as many changes as
+                # possible, unless the client caps the failures it
+                # accepts with "failOnErrors".
+                errors += 1
+                if (
+                    bulk_request.fail_on_errors
+                    and errors >= bulk_request.fail_on_errors
+                ):
+                    break
+
+            response = BulkResponse[self._resource_union()](operations=results)
+            return response.model_dump(scim_ctx=Context.BULK_RESPONSE)
+
+    def _resolve_bulk_target(
+        self, path: str
+    ) -> tuple[type[Resource[Any]] | None, str | None]:
+        """Resolve a bulk operation's ``path`` to the resource type (and id, if any) it targets."""
+        model = self.provider.model_for_endpoint(path)
+        if model is not None:
+            return model, None
+        endpoint, _, resource_id = path.rpartition("/")
+        return self.provider.model_for_endpoint(endpoint), resource_id
+
+    def _run_bulk_operation(self, operation: BulkOperation[Any]) -> BulkOperation[Any]:
+        """Apply one bulk operation and describe its outcome.
+
+        The target is resolved before the operation is applied, so a
+        failure still knows the location :rfc:`RFC7644 §3.7 <7644#section-3.7>`
+        requires of every response but a failed creation.
+        """
+        # A union type parameter isn't instantiable (BulkOperation[User |
+        # Group] resolves to a Union of the two), and every field a result
+        # sets (status, location, version, an Error response) is the same
+        # regardless of which concrete resource type the operation
+        # targets, so any one resource type parameterizes it.
+        result = BulkOperation[self.resource_types[0]](
+            method=operation.method, bulk_id=operation.bulk_id
+        )
+        assert self.storage is not None
+        assert operation.path is not None
+
+        resource_type, resource_id = self._resolve_bulk_target(operation.path)
+        if resource_type is None:
+            result.status = HTTPStatus.NOT_FOUND
+            result.response = Error(
+                status=HTTPStatus.NOT_FOUND,
+                detail=f"{operation.path!r} does not designate a known resource type",
+            )
+            return result
+
+        if operation.method != BulkOperation.Method.post:
+            # RFC7644 §3.7.3: "A 'location' attribute that includes the
+            # resource's endpoint MUST be returned for all operations
+            # except for failed POST operations (which have no
+            # location)" -- so it is set once here, ahead of success or
+            # failure, rather than duplicated in every branch below.
+            assert resource_id is not None
+            result.location = self._resource_location_for_id(resource_type, resource_id)
+
+        try:
+            if operation.method == BulkOperation.Method.post:
+                created = self.storage.create(resource_type, operation.data)
+                created = self._with_location(resource_type, created)
+                result.status = HTTPStatus.CREATED
+                result.location = created.meta.location if created.meta else None
+                result.version = created.meta.version if created.meta else None
+                return result
+
+            assert resource_id is not None
+            original = self.storage.query(resource_type, resource_id)
+
+            # RFC7644 §3.7: "version [...] MAY be used if the service
+            # provider supports entity-tags (ETags) [...] and 'method' is
+            # 'PUT', 'PATCH', or 'DELETE'."
+            current_version = original.meta.version if original.meta else None
+            if (
+                operation.version is not None
+                and current_version is not None
+                and operation.version != current_version
+            ):
+                result.status = HTTPStatus.PRECONDITION_FAILED
+                result.response = Error(
+                    status=HTTPStatus.PRECONDITION_FAILED, detail="ETag mismatch"
+                )
+                return result
+
+            if operation.method == BulkOperation.Method.delete:
+                self.storage.delete(resource_type, resource_id)
+                result.status = HTTPStatus.NO_CONTENT
+                return result
+
+            if operation.method == BulkOperation.Method.patch:
+                if operation.data.patch(original):
+                    original = self.storage.update(resource_type, original)
+            else:
+                operation.data.replace(original)
+                original = self.storage.update(resource_type, operation.data)
+
+            updated = self._with_location(resource_type, original)
+            result.status = HTTPStatus.OK
+            result.version = updated.meta.version if updated.meta else None
+            return result
+
+        except ResourceNotFoundError as exc:
+            result.status = HTTPStatus.NOT_FOUND
+            result.response = Error(status=HTTPStatus.NOT_FOUND, detail=str(exc))
+            return result
+        except SCIMException as exc:
+            result.status = exc.status
+            result.response = exc.to_error()
+            return result
+
     # -- Overridable hooks --------------------------------------------
 
     def get_service_provider_config(self) -> ServiceProviderConfig:
@@ -440,8 +618,14 @@ class SCIM2:
         self, resource_type: type[Resource[Any]], resource: Resource[Any]
     ) -> str:
         """Return the canonical URL of ``resource``."""
+        assert resource.id is not None
+        return self._resource_location_for_id(resource_type, resource.id)
+
+    def _resource_location_for_id(
+        self, resource_type: type[Resource[Any]], resource_id: str
+    ) -> str:
         slug = resource_type.__name__.lower()
-        return url_for(f"scim2.get_{slug}", resource_id=resource.id, _external=True)
+        return url_for(f"scim2.get_{slug}", resource_id=resource_id, _external=True)
 
     def _with_location(
         self, resource_type: type[Resource[Any]], resource: Resource[Any]

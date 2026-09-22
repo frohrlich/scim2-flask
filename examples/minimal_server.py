@@ -28,6 +28,7 @@ from typing import Any
 from uuid import uuid4
 
 from flask import Flask
+from scim2_models import Bulk
 from scim2_models import ComplexAttribute
 from scim2_models import ETag
 from scim2_models import Filter
@@ -48,6 +49,8 @@ from scim2_flask import ResourceNotFoundError
 from scim2_flask import ScimStorage
 
 MAX_RESULTS = 50
+MAX_BULK_OPERATIONS = 100
+MAX_BULK_PAYLOAD_SIZE = 1_048_576
 
 
 # -- sorting: adapted from the scim2-models integration guides
@@ -231,6 +234,11 @@ class MinimalSCIM2(SCIM2):
         config.filter = Filter(supported=True, max_results=MAX_RESULTS)
         config.sort = Sort(supported=True)
         config.etag = ETag(supported=True)
+        config.bulk = Bulk(
+            supported=True,
+            max_operations=MAX_BULK_OPERATIONS,
+            max_payload_size=MAX_BULK_PAYLOAD_SIZE,
+        )
         return config
 
 
