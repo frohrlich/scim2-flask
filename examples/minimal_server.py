@@ -71,13 +71,15 @@ def sort_resources(
 
     def key(resource: Resource[Any]) -> tuple[bool, Any]:
         value = sort_value(resource, resolved)
-        # "String type attributes are case insensitive by default, unless the
-        # attribute type is defined as a case-exact string."
+        # RFC7644 §3.4.2.3: "String type attributes are case insensitive by
+        # default, unless the attribute type is defined as a case-exact
+        # string."
         if isinstance(value, str) and not resolved.case_exact:
             value = value.casefold()
-        # "if there is no data for the specified sortBy value, they are sorted
-        # via the sortOrder parameter, i.e., they are ordered last if ascending
-        # and first if descending", which reversing the whole key achieves.
+        # RFC7644 §3.4.2.3: "if there is no data for the specified sortBy
+        # value, they are sorted via the sortOrder parameter, i.e., they are
+        # ordered last if ascending and first if descending", which
+        # reversing the whole key achieves.
         return (value is None, value if value is not None else "")
 
     return sorted(resources, key=key, reverse=descending)
@@ -99,8 +101,9 @@ def sort_value(resource: Resource[Any], resolved: AttributeBinding) -> Any:
 
     if resolved.is_multivalued:
         entries = value or []
-        # "resources are sorted by the value of the primary attribute, if any,
-        # or else the first value in the list, if any."
+        # RFC7644 §3.4.2.3: "resources are sorted by the value of the primary
+        # attribute (see Section 2.4 of [RFC7643]), if any, or else the
+        # first value in the list, if any."
         primary = next(
             (entry for entry in entries if getattr(entry, "primary", None)), None
         )

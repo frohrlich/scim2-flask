@@ -108,8 +108,7 @@ class SCIM2:
             # RFC7644 §3.14: "When supported, SCIM ETags MUST be specified
             # as an HTTP header and SHOULD be specified within the
             # 'version' attribute contained in the resource's 'meta'
-            # attribute." A storage that never sets meta.version leaves
-            # this as a no-op.
+            # attribute."
             data = response.get_json(silent=True)
             if isinstance(data, dict) and (meta := data.get("meta")):
                 if version := meta.get("version"):
@@ -159,8 +158,7 @@ class SCIM2:
         client MAY supply an If-Match header [...] for PUT and PATCH
         operations to ensure that the requested operation succeeds only
         if the supplied ETag matches the latest service provider
-        resource." A ``resource`` with no ``meta.version`` (the storage
-        does not support versioning) leaves this as a no-op.
+        resource."
         """
         if_match = request.headers.get("If-Match")
         if not if_match:
