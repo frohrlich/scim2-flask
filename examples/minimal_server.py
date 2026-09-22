@@ -54,10 +54,9 @@ class InMemoryStorage(ScimStorage):
     def search(
         self, resource_type: type[Resource[Any]], search_request: SearchRequest
     ) -> tuple[int, list[Resource[Any]]]:
-        # A real backend would push filtering, sorting and pagination down to
-        # its query engine. Here we just paginate the naive way, matching the
-        # `page_of` helper from the scim2-models integration guides.
         resources = list(self.users.values())
+        if search_request.filter:
+            resources = [r for r in resources if search_request.filter.match(r)]
         start = (search_request.start_index or 1) - 1
         limit = (
             search_request.count if search_request.count is not None else MAX_RESULTS

@@ -127,13 +127,6 @@ class SCIM2:
 
     # -- Routing -----------------------------------------------------
 
-    @staticmethod
-    def _attribute_filters(response_parameters: ResponseParameters) -> dict[str, Any]:
-        return {
-            "attributes": response_parameters.attributes,
-            "excluded_attributes": response_parameters.excluded_attributes,
-        }
-
     def get_resource_type(self, resource_type: type[Resource[Any]]) -> ResourceType:
         """Return the SCIM metadata describing ``resource_type``."""
         return self._resource_type_by_model[resource_type]
@@ -150,7 +143,7 @@ class SCIM2:
         endpoint = self._endpoint(resource_type)
         slug = resource_type.__name__.lower()
 
-        def search(search_request: SearchRequest, scim_ctx: Context) -> Any:
+        def search(search_request: SearchRequest[Any], scim_ctx: Context) -> Any:
             assert self.storage is not None
             total, resources = self.storage.search(resource_type, search_request)
             resources = [
@@ -164,15 +157,17 @@ class SCIM2:
             )
             return response.model_dump(
                 scim_ctx=scim_ctx,
-                **self._attribute_filters(search_request),
+                response_parameters=search_request,
             )
 
         def list_view() -> Any:
-            search_request = SearchRequest.model_validate(request.args.to_dict())
+            search_request = SearchRequest[resource_type].model_validate(
+                request.args.to_dict()
+            )
             return search(search_request, Context.RESOURCE_QUERY_RESPONSE)
 
         def search_view() -> Any:
-            search_request = SearchRequest.model_validate_json(
+            search_request = SearchRequest[resource_type].model_validate_json(
                 request.data, scim_ctx=Context.SEARCH_REQUEST
             )
             return search(search_request, Context.SEARCH_RESPONSE)
@@ -191,7 +186,7 @@ class SCIM2:
                 created,
                 {
                     "scim_ctx": Context.RESOURCE_CREATION_RESPONSE,
-                    **self._attribute_filters(response_parameters),
+                    "response_parameters": response_parameters,
                 },
                 HTTPStatus.CREATED,
             )
@@ -207,7 +202,7 @@ class SCIM2:
                 resource,
                 {
                     "scim_ctx": Context.RESOURCE_QUERY_RESPONSE,
-                    **self._attribute_filters(response_parameters),
+                    "response_parameters": response_parameters,
                 },
             )
 
@@ -243,7 +238,7 @@ class SCIM2:
                 updated,
                 {
                     "scim_ctx": Context.RESOURCE_REPLACEMENT_RESPONSE,
-                    **self._attribute_filters(response_parameters),
+                    "response_parameters": response_parameters,
                 },
             )
 
@@ -267,7 +262,7 @@ class SCIM2:
                 resource,
                 {
                     "scim_ctx": Context.RESOURCE_PATCH_RESPONSE,
-                    **self._attribute_filters(response_parameters),
+                    "response_parameters": response_parameters,
                 },
             )
 
@@ -312,7 +307,7 @@ class SCIM2:
 
         @blueprint.post("/.search")
         def search_root() -> Any:
-            search_request = SearchRequest.model_validate_json(
+            search_request = SearchRequest[self._resource_union()].model_validate_json(
                 request.data, scim_ctx=Context.SEARCH_REQUEST
             )
             assert self.storage is not None
@@ -335,7 +330,7 @@ class SCIM2:
             )
             return response.model_dump(
                 scim_ctx=Context.SEARCH_RESPONSE,
-                **self._attribute_filters(search_request),
+                response_parameters=search_request,
             )
 
         @blueprint.get("/ResourceTypes/<name>")
