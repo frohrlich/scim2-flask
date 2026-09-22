@@ -27,10 +27,12 @@ from uuid import uuid4
 
 from flask import Flask
 from scim2_models import ComplexAttribute
+from scim2_models import Filter
 from scim2_models import Group
 from scim2_models import Meta
 from scim2_models import Resource
 from scim2_models import SearchRequest
+from scim2_models import ServiceProviderConfig
 from scim2_models import UniquenessException
 from scim2_models import User
 from scim2_models.path import AttributeBinding
@@ -198,9 +200,18 @@ class InMemoryStorage(ScimStorage):
             raise ResourceNotFoundError(resource_type, resource_id) from None
 
 
+class MinimalSCIM2(SCIM2):
+    """Advertise the capabilities :class:`InMemoryStorage` actually supports."""
+
+    def get_service_provider_config(self) -> ServiceProviderConfig:
+        config = super().get_service_provider_config()
+        config.filter = Filter(supported=True, max_results=MAX_RESULTS)
+        return config
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
-    scim2 = SCIM2(InMemoryStorage(), [User, Group])
+    scim2 = MinimalSCIM2(InMemoryStorage(), [User, Group])
     scim2.init_app(app)
     return app
 
