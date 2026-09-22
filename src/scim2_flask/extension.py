@@ -32,6 +32,7 @@ from scim2_models import ScimProvider
 from scim2_models import SearchRequest
 from scim2_models import ServiceProviderConfig
 from scim2_models import Sort
+from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
 
@@ -288,14 +289,29 @@ class SCIM2:
         )
 
     def _register_discovery_routes(self, blueprint: Blueprint) -> None:
+        def _reject_filter() -> None:
+            """:rfc:`RFC7644 §4 <7644#section-4>`.
+
+            "Query parameters described in Section 3.4.2, such as
+            filtering, sorting, and pagination, SHALL be ignored. If a
+            "filter" is provided, the service provider SHOULD respond
+            with HTTP status code 403 (Forbidden) to ensure that clients
+            cannot incorrectly assume that any matching conditions
+            specified in a filter are true."
+            """
+            if request.args.get("filter"):
+                raise Forbidden("Discovery endpoints do not support filtering")
+
         @blueprint.get("/ServiceProviderConfig")
         def service_provider_config() -> Any:
+            _reject_filter()
             return self.get_service_provider_config().model_dump(
                 scim_ctx=Context.RESOURCE_QUERY_RESPONSE
             )
 
         @blueprint.get("/ResourceTypes")
         def list_resource_types() -> Any:
+            _reject_filter()
             resource_types = [self.get_resource_type(rt) for rt in self.resource_types]
             response = ListResponse[ResourceType](
                 total_results=len(resource_types),
@@ -343,6 +359,7 @@ class SCIM2:
 
         @blueprint.get("/Schemas")
         def list_schemas() -> Any:
+            _reject_filter()
             schemas = self.provider.schemas
             response = ListResponse[Schema](
                 total_results=len(schemas),
