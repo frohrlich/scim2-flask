@@ -6,15 +6,35 @@ build-backend = "uv_build"
 name = "scim2-flask"
 version = "0.0.0"
 description = "Painless SCIM integration for Flask"
-readme = "README.md"
 authors = [
     { name = "Éloi Rivard", email = "eloi@yaal.coop" }
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+keywords = ["scim", "scim2", "provisioning", "flask", "rfc7643", "rfc7644"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Environment :: Web Environment",
+    "Framework :: Flask",
+    "Programming Language :: Python",
+    "Operating System :: OS Independent",
 ]
 requires-python = ">=3.10"
 dependencies = [
     "flask>=3.1.3",
     "scim2-models>=0.8.0",
 ]
+
+[project.urls]
+repository = "https://github.com/python-scim/scim2-flask"
 
 [dependency-groups]
 dev = [

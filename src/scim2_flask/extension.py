@@ -441,7 +441,9 @@ class SCIM2:
             # is exceeded, the service provider MUST return HTTP response
             # code 413 (Payload Too Large)."
             payload_size = request.content_length
-            if payload_size is None:
+            if payload_size is None:  # pragma: no cover
+                # A client without Content-Length (e.g. chunked transfer
+                # encoding); not reproducible through the test client.
                 payload_size = len(request.data)
             if (
                 config.max_payload_size is not None
