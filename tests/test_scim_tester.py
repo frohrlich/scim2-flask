@@ -7,8 +7,6 @@ import pytest
 from scim2_tester import Status
 from scim2_tester import check_server
 
-# Bulk operations are not implemented yet, so its tag is left out until
-# scim2-flask supports it.
 SUPPORTED_TAGS = [
     "discovery",
     "resource-types",
