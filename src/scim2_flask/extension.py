@@ -35,6 +35,7 @@ from scim2_models import Sort
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
+from werkzeug.exceptions import PreconditionFailed
 
 from .storage import ResourceNotFoundError
 from .storage import ScimStorage
@@ -102,6 +103,19 @@ class SCIM2:
             response.headers["Content-Type"] = "application/scim+json"
             return response
 
+        @blueprint.after_request
+        def _set_etag_header(response: Response) -> Response:
+            # RFC7644 §3.14: "When supported, SCIM ETags MUST be specified
+            # as an HTTP header and SHOULD be specified within the
+            # 'version' attribute contained in the resource's 'meta'
+            # attribute." A storage that never sets meta.version leaves
+            # this as a no-op.
+            data = response.get_json(silent=True)
+            if isinstance(data, dict) and (meta := data.get("meta")):
+                if version := meta.get("version"):
+                    response.headers["ETag"] = version
+            return response.make_conditional(request)
+
         blueprint.register_error_handler(ValidationError, self.handle_validation_error)
         blueprint.register_error_handler(SCIMException, self.handle_scim_exception)
         blueprint.register_error_handler(HTTPException, self.handle_http_exception)
@@ -137,6 +151,26 @@ class SCIM2:
 
     def _resource_union(self) -> Any:
         return reduce(or_, self.resource_types)
+
+    def _check_if_match(self, resource: Resource[Any]) -> None:
+        """:rfc:`RFC7644 §3.14 <7644#section-3.14>`.
+
+        "If the service provider supports versioning of resources, the
+        client MAY supply an If-Match header [...] for PUT and PATCH
+        operations to ensure that the requested operation succeeds only
+        if the supplied ETag matches the latest service provider
+        resource." A ``resource`` with no ``meta.version`` (the storage
+        does not support versioning) leaves this as a no-op.
+        """
+        if_match = request.headers.get("If-Match")
+        if not if_match:
+            return
+        version = resource.meta.version if resource.meta else None
+        if version is None:
+            return
+        tags = [tag.strip() for tag in if_match.split(",")]
+        if "*" not in tags and version not in tags:
+            raise PreconditionFailed("ETag mismatch")
 
     def _register_resource_routes(
         self, blueprint: Blueprint, resource_type: type[Resource[Any]]
@@ -226,6 +260,7 @@ class SCIM2:
             )
             assert self.storage is not None
             original = self.storage.query(resource_type, resource_id)
+            self._check_if_match(original)
             payload = resource_type.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_REPLACEMENT_REQUEST
             )
@@ -249,6 +284,7 @@ class SCIM2:
             )
             assert self.storage is not None
             resource = self.storage.query(resource_type, resource_id)
+            self._check_if_match(resource)
             patch_op = PatchOp[resource_type].model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_PATCH_REQUEST
             )
@@ -269,6 +305,8 @@ class SCIM2:
 
         def delete_view(resource_id: str) -> Any:
             assert self.storage is not None
+            if request.headers.get("If-Match"):
+                self._check_if_match(self.storage.query(resource_type, resource_id))
             self.storage.delete(resource_type, resource_id)
             return "", HTTPStatus.NO_CONTENT
 

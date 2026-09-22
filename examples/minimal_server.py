@@ -19,6 +19,8 @@ Then, for instance:
     curl http://localhost:5000/scim/v2/Groups
 """
 
+import hashlib
+import json
 from collections import defaultdict
 from datetime import datetime
 from datetime import timezone
@@ -27,6 +29,7 @@ from uuid import uuid4
 
 from flask import Flask
 from scim2_models import ComplexAttribute
+from scim2_models import ETag
 from scim2_models import Filter
 from scim2_models import Group
 from scim2_models import Meta
@@ -112,6 +115,20 @@ def sort_value(resource: Resource[Any], resolved: AttributeBinding) -> Any:
     return getattr(value, sub_field_name, None)
 
 
+# -- versioning: adapted from make_etag() in the scim2-models integration
+# guides https://scim2-models.readthedocs.io/en/latest/integrations/helpers.html
+def make_version(resource: Resource[Any]) -> str:
+    """Compute a weak ETag from a resource's content, per :rfc:`RFC7644 §3.14 <7644#section-3.14>`.
+
+    ``meta`` is excluded so that touching only bookkeeping (e.g.
+    ``lastModified``) without a real content change still yields the same
+    version.
+    """
+    content = resource.model_dump(mode="json", exclude={"meta"}, scim_ctx=None)
+    digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+    return f'W/"{digest[:16]}"'
+
+
 class InMemoryStorage(ScimStorage):
     """A :class:`ScimStorage` storing resources in a plain dict per resource type.
 
@@ -160,6 +177,7 @@ class InMemoryStorage(ScimStorage):
         resource.meta = Meta(
             resource_type=resource_type.__name__, created=now, last_modified=now
         )
+        resource.meta.version = make_version(resource)
         self.resources[resource_type][resource.id] = resource
         return resource
 
@@ -176,6 +194,7 @@ class InMemoryStorage(ScimStorage):
             created=created,
             last_modified=datetime.now(timezone.utc),
         )
+        resource.meta.version = make_version(resource)
         store[resource.id] = resource
         return resource
 
@@ -208,6 +227,7 @@ class MinimalSCIM2(SCIM2):
         config = super().get_service_provider_config()
         config.filter = Filter(supported=True, max_results=MAX_RESULTS)
         config.sort = Sort(supported=True)
+        config.etag = ETag(supported=True)
         return config
 
 
