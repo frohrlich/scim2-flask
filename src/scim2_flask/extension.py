@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from functools import reduce
 from http import HTTPStatus
+from operator import or_
 from typing import Any
 
 from flask import Blueprint, Flask, Response, jsonify, request, url_for
@@ -21,6 +23,7 @@ from scim2_models import (
     ResponseParameters,
     Schema,
     SCIMException,
+    ScimProvider,
     SearchRequest,
     ServiceProviderConfig,
     Sort,
@@ -66,12 +69,19 @@ class SCIM2:
         self.storage = storage
         self.resource_types = list(resource_types) if resource_types else []
         self.url_prefix = url_prefix
+        self.provider = ScimProvider(models=self.resource_types)
+        self._resource_type_by_model = dict(
+            zip(self.resource_types, self.provider.resource_types, strict=True)
+        )
+
         if app is not None:
             self.init_app(app)
 
     def init_app(self, app: Flask) -> None:
         if self.storage is None:
             raise RuntimeError("SCIM2 extension requires a ScimStorage")
+        if not self.resource_types:
+            raise RuntimeError("SCIM2 extension requires at least one resource type")
 
         blueprint = self.create_blueprint()
         app.register_blueprint(blueprint)
@@ -120,16 +130,13 @@ class SCIM2:
 
     def get_resource_type(self, resource_type: type[Resource[Any]]) -> ResourceType:
         """Return the SCIM metadata describing ``resource_type``."""
-        return ResourceType.from_resource(resource_type)
+        return self._resource_type_by_model[resource_type]
 
     def _endpoint(self, resource_type: type[Resource[Any]]) -> str:
         return str(self.get_resource_type(resource_type).endpoint).lstrip("/")
 
     def _resource_union(self) -> Any:
-        union: Any = self.resource_types[0]
-        for resource_type in self.resource_types[1:]:
-            union = union | resource_type
-        return union
+        return reduce(or_, self.resource_types)
 
     def _register_resource_routes(
         self, blueprint: Blueprint, resource_type: type[Resource[Any]]
@@ -279,7 +286,7 @@ class SCIM2:
 
         @blueprint.get("/Schemas")
         def list_schemas() -> Any:
-            schemas = [rt.to_schema() for rt in self.resource_types]
+            schemas = self.provider.schemas
             response = ListResponse[Schema](
                 total_results=len(schemas),
                 start_index=1,
@@ -290,8 +297,7 @@ class SCIM2:
 
         @blueprint.get("/Schemas/<path:schema_id>")
         def get_schema_view(schema_id: str) -> Any:
-            for resource_type in self.resource_types:
-                schema = resource_type.to_schema()
+            for schema in self.provider.schemas:
                 if schema.id == schema_id:
                     return schema.model_dump(scim_ctx=Context.RESOURCE_QUERY_RESPONSE)
             raise ResourceNotFoundError(Schema, schema_id)
