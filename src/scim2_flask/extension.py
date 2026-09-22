@@ -22,6 +22,7 @@ from scim2_models import Filter
 from scim2_models import ListResponse
 from scim2_models import Meta
 from scim2_models import Patch
+from scim2_models import PatchOp
 from scim2_models import Resource
 from scim2_models import ResourceType
 from scim2_models import ResponseParameters
@@ -33,7 +34,6 @@ from scim2_models import ServiceProviderConfig
 from scim2_models import Sort
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
-from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
 
 from .storage import ResourceNotFoundError
 from .storage import ScimStorage
@@ -224,16 +224,72 @@ class SCIM2:
             f"/{endpoint}/.search", f"search_{slug}", search_view, methods=["POST"]
         )
 
-        def not_implemented_view(resource_id: str) -> Any:
-            raise HTTPNotImplemented(
-                f"{request.method} is not implemented for {resource_type.__name__}"
+        def replace_view(resource_id: str) -> Any:
+            response_parameters = ResponseParameters.model_validate(
+                request.args.to_dict()
             )
+            assert self.storage is not None
+            original = self.storage.query(resource_type, resource_id)
+            payload = resource_type.model_validate_json(
+                request.data, scim_ctx=Context.RESOURCE_REPLACEMENT_REQUEST
+            )
+            # RFC 7644 §3.5.1: readOnly attributes (id, meta) are carried over
+            # from the original resource, and immutable ones are checked for
+            # equality; Resource.replace() enforces both in-place on payload.
+            payload.replace(original)
+            updated = self.storage.update(resource_type, payload)
+            updated = self._with_location(resource_type, updated)
+            return self._resource_response(
+                updated,
+                {
+                    "scim_ctx": Context.RESOURCE_REPLACEMENT_RESPONSE,
+                    **self._attribute_filters(response_parameters),
+                },
+            )
+
+        def patch_view(resource_id: str) -> Any:
+            response_parameters = ResponseParameters.model_validate(
+                request.args.to_dict()
+            )
+            assert self.storage is not None
+            resource = self.storage.query(resource_type, resource_id)
+            patch_op = PatchOp[resource_type].model_validate_json(
+                request.data, scim_ctx=Context.RESOURCE_PATCH_REQUEST
+            )
+            # PatchOp.patch() applies every operation in sequence and mutates
+            # ``resource`` in-place; it raises a SCIMException subclass (already
+            # handled below) when an operation is invalid or targets an
+            # immutable attribute.
+            if patch_op.patch(resource):
+                resource = self.storage.update(resource_type, resource)
+            resource = self._with_location(resource_type, resource)
+            return self._resource_response(
+                resource,
+                {
+                    "scim_ctx": Context.RESOURCE_PATCH_RESPONSE,
+                    **self._attribute_filters(response_parameters),
+                },
+            )
+
+        def delete_view(resource_id: str) -> Any:
+            assert self.storage is not None
+            self.storage.delete(resource_type, resource_id)
+            return "", HTTPStatus.NO_CONTENT
 
         blueprint.add_url_rule(
             f"/{endpoint}/<resource_id>",
-            f"not_implemented_{slug}",
-            not_implemented_view,
-            methods=["PUT", "PATCH", "DELETE"],
+            f"replace_{slug}",
+            replace_view,
+            methods=["PUT"],
+        )
+        blueprint.add_url_rule(
+            f"/{endpoint}/<resource_id>", f"patch_{slug}", patch_view, methods=["PATCH"]
+        )
+        blueprint.add_url_rule(
+            f"/{endpoint}/<resource_id>",
+            f"delete_{slug}",
+            delete_view,
+            methods=["DELETE"],
         )
 
     def _register_discovery_routes(self, blueprint: Blueprint) -> None:
@@ -317,7 +373,7 @@ class SCIM2:
         actually supports.
         """
         return ServiceProviderConfig(
-            patch=Patch(supported=False),
+            patch=Patch(supported=True),
             bulk=Bulk(supported=False, max_operations=0, max_payload_size=0),
             filter=Filter(supported=False, max_results=200),
             change_password=ChangePassword(supported=False),

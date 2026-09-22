@@ -76,6 +76,30 @@ class InMemoryStorage(ScimStorage):
         self.users[resource.id] = resource
         return resource
 
+    def update(
+        self, resource_type: type[Resource[Any]], resource: Resource[Any]
+    ) -> Resource[Any]:
+        if resource.id not in self.users:
+            raise ResourceNotFoundError(resource_type, resource.id)
+        created = (
+            self.users[resource.id].meta.created
+            if self.users[resource.id].meta
+            else None
+        )
+        resource.meta = Meta(
+            resource_type=resource_type.__name__,
+            created=created,
+            last_modified=datetime.now(timezone.utc),
+        )
+        self.users[resource.id] = resource
+        return resource
+
+    def delete(self, resource_type: type[Resource[Any]], resource_id: str) -> None:
+        try:
+            del self.users[resource_id]
+        except KeyError:
+            raise ResourceNotFoundError(resource_type, resource_id) from None
+
 
 def create_app() -> Flask:
     app = Flask(__name__)

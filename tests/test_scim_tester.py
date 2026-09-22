@@ -7,10 +7,8 @@ import pytest
 from scim2_tester import Status
 from scim2_tester import check_server
 
-# Only the features scim2-flask currently implements: discovery endpoints,
-# resource creation, and reads (including attribute filtering and search).
-# Update, delete and patch are not implemented yet, so their tags are left
-# out until scim2-flask supports them.
+# Bulk operations are not implemented yet, so its tag is left out until
+# scim2-flask supports it.
 SUPPORTED_TAGS = [
     "discovery",
     "resource-types",
@@ -19,6 +17,11 @@ SUPPORTED_TAGS = [
     "crud:create",
     "crud:read",
     "crud:read:attributes",
+    "crud:update",
+    "crud:delete",
+    "patch:add",
+    "patch:remove",
+    "patch:replace",
     "misc",
 ]
 
