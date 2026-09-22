@@ -21,6 +21,7 @@ dev = [
     "httpx2>=2.13.0",
     "prek>=0.5.3",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "scim2-tester>=0.4.0",
 ]
 
@@ -53,6 +54,9 @@ force-single-line = true
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.coverage.run]
+source = ["scim2_flask", "examples", "tests"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
