@@ -12,7 +12,6 @@ from flask import jsonify
 from flask import request
 from flask import url_for
 from pydantic import ValidationError
-from scim2_models import AuthenticationScheme
 from scim2_models import Bulk
 from scim2_models import BulkOperation
 from scim2_models import BulkRequest
@@ -38,6 +37,7 @@ from scim2_models import Sort
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
+from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
 from werkzeug.exceptions import PreconditionFailed
 
 from .storage import ResourceNotFoundError
@@ -141,6 +141,16 @@ class SCIM2:
 
         self._register_discovery_routes(blueprint)
         self._register_bulk_route(blueprint)
+
+        def me_view() -> Any:
+            # RFC7644 §3.11: "A service provider that does NOT support
+            # this feature SHOULD respond with HTTP status code 501 (Not
+            # Implemented)."
+            raise HTTPNotImplemented("/Me is not supported")
+
+        blueprint.add_url_rule(
+            "/Me", "me", me_view, methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
+        )
 
         def not_found_view(_path: str) -> Any:
             raise NotFound()
@@ -607,13 +617,7 @@ class SCIM2:
             change_password=ChangePassword(supported=False),
             sort=Sort(supported=False),
             etag=ETag(supported=False),
-            authentication_schemes=[
-                AuthenticationScheme(
-                    type=AuthenticationScheme.Type.httpbasic,
-                    name="HTTP Basic",
-                    description="Authentication via HTTP Basic",
-                )
-            ],
+            authentication_schemes=[],
         )
 
     def resource_location(

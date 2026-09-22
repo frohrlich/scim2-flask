@@ -20,6 +20,13 @@ def test_validation_error_returns_scim_error(client):
     assert r.get_json()["scimType"] == "invalidSyntax"
 
 
+def test_me_returns_not_implemented(client):
+    # RFC7644 §3.11: "A service provider that does NOT support this
+    # feature SHOULD respond with HTTP status code 501 (Not
+    # Implemented)."
+    assert client.get("/scim/v2/Me").status_code == 501
+
+
 def test_discovery_endpoints_reject_filter(client):
     # RFC7644 §4: "If a 'filter' is provided, the service provider SHOULD
     # respond with HTTP status code 403 (Forbidden) to ensure that clients
