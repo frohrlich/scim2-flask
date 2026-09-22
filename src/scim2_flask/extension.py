@@ -5,33 +5,38 @@ from http import HTTPStatus
 from operator import or_
 from typing import Any
 
-from flask import Blueprint, Flask, Response, jsonify, request, url_for
+from flask import Blueprint
+from flask import Flask
+from flask import Response
+from flask import jsonify
+from flask import request
+from flask import url_for
 from pydantic import ValidationError
-from scim2_models import (
-    AuthenticationScheme,
-    Bulk,
-    ChangePassword,
-    Context,
-    Error,
-    ETag,
-    Filter,
-    ListResponse,
-    Meta,
-    Patch,
-    Resource,
-    ResourceType,
-    ResponseParameters,
-    Schema,
-    SCIMException,
-    ScimProvider,
-    SearchRequest,
-    ServiceProviderConfig,
-    Sort,
-)
-from werkzeug.exceptions import HTTPException, NotFound
+from scim2_models import AuthenticationScheme
+from scim2_models import Bulk
+from scim2_models import ChangePassword
+from scim2_models import Context
+from scim2_models import Error
+from scim2_models import ETag
+from scim2_models import Filter
+from scim2_models import ListResponse
+from scim2_models import Meta
+from scim2_models import Patch
+from scim2_models import Resource
+from scim2_models import ResourceType
+from scim2_models import ResponseParameters
+from scim2_models import Schema
+from scim2_models import SCIMException
+from scim2_models import ScimProvider
+from scim2_models import SearchRequest
+from scim2_models import ServiceProviderConfig
+from scim2_models import Sort
+from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import NotFound
 from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
 
-from .storage import ResourceNotFoundError, ScimStorage
+from .storage import ResourceNotFoundError
+from .storage import ScimStorage
 
 EXTENSION_NAME = "scim2"
 
@@ -48,6 +53,7 @@ class SCIM2:
     Or with the application factory pattern::
 
         scim2 = SCIM2(storage, [User])
+
 
         def create_app():
             app = Flask(__name__)

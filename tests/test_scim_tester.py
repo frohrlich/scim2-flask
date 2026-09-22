@@ -4,7 +4,8 @@ https://github.com/python-scim/scim2-tester
 """
 
 import pytest
-from scim2_tester import Status, check_server
+from scim2_tester import Status
+from scim2_tester import check_server
 
 # Only the features scim2-flask currently implements: discovery endpoints,
 # resource creation, and reads (including attribute filtering and search).

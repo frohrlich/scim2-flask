@@ -1,7 +1,9 @@
-from abc import ABC, abstractmethod
+from abc import ABC
+from abc import abstractmethod
 from typing import Any
 
-from scim2_models import Resource, SearchRequest
+from scim2_models import Resource
+from scim2_models import SearchRequest
 
 
 class ResourceNotFoundError(Exception):

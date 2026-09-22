@@ -1,4 +1,4 @@
-"""Minimal SCIM server built with scim2-flask.
+r"""Minimal SCIM server built with scim2-flask.
 
 Run it with:
 
@@ -13,14 +13,20 @@ Then, for instance:
     curl http://localhost:5000/scim/v2/Users
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from uuid import uuid4
 
 from flask import Flask
-from scim2_models import Meta, Resource, SearchRequest, User
+from scim2_models import Meta
+from scim2_models import Resource
+from scim2_models import SearchRequest
+from scim2_models import User
 
-from scim2_flask import SCIM2, ResourceNotFoundError, ScimStorage
+from scim2_flask import SCIM2
+from scim2_flask import ResourceNotFoundError
+from scim2_flask import ScimStorage
 
 MAX_RESULTS = 50
 
