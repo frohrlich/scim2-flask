@@ -387,7 +387,7 @@ class SCIM2:
         return ServiceProviderConfig(
             patch=Patch(supported=True),
             bulk=Bulk(supported=False, max_operations=0, max_payload_size=0),
-            filter=Filter(supported=False, max_results=200),
+            filter=Filter(supported=False, max_results=None),
             change_password=ChangePassword(supported=False),
             sort=Sort(supported=False),
             etag=ETag(supported=False),

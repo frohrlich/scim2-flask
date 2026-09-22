@@ -33,6 +33,7 @@ from scim2_models import Meta
 from scim2_models import Resource
 from scim2_models import SearchRequest
 from scim2_models import ServiceProviderConfig
+from scim2_models import Sort
 from scim2_models import UniquenessException
 from scim2_models import User
 from scim2_models.path import AttributeBinding
@@ -206,6 +207,7 @@ class MinimalSCIM2(SCIM2):
     def get_service_provider_config(self) -> ServiceProviderConfig:
         config = super().get_service_provider_config()
         config.filter = Filter(supported=True, max_results=MAX_RESULTS)
+        config.sort = Sort(supported=True)
         return config
 
 
