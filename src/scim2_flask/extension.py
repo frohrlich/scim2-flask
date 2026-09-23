@@ -564,6 +564,14 @@ class SCIM2:
 
         resource_type, resource_id = self._resolve_bulk_target(operation.path)
         if resource_type is None:
+            if operation.method != BulkOperation.Method.post:
+                # RFC7644 §3.7.3: "location" is REQUIRED for all but a
+                # failed POST, even one no resource type answers.
+                result.location = url_for(
+                    "scim2.not_found",
+                    _path=operation.path.lstrip("/"),
+                    _external=True,
+                )
             result.status = HTTPStatus.NOT_FOUND
             result.response = Error(
                 status=HTTPStatus.NOT_FOUND,

@@ -1,21 +1,22 @@
-import json
-
 import pytest
 from flask import Flask
-from scim2_models import Context
 from scim2_models import EnterpriseUser
+from scim2_models import MutabilityException
 from scim2_models import PatchOp
 from scim2_models import PatchOperation
+from scim2_models import ResourceType
+from scim2_models import Schema
 from scim2_models import SCIMException
 from scim2_models import SearchRequest
+from scim2_models import ServiceProviderConfig
 from scim2_models import User
-from werkzeug.test import Client
 
 from examples.minimal_server import InMemoryStorage
 from scim2_flask import SCIM2
 
 
 def test_validation_error_returns_scim_error(client):
+    # A payload that is not even JSON cannot be built with the SCIM client.
     r = client.post("/scim/v2/Users", data=b"{")
     assert r.status_code == 400
     assert r.get_json()["scimType"] == "invalidSyntax"
@@ -24,18 +25,21 @@ def test_validation_error_returns_scim_error(client):
 def test_me_returns_not_implemented(client):
     # RFC7644 §3.11: "A service provider that does NOT support this
     # feature SHOULD respond with HTTP status code 501 (Not
-    # Implemented)."
+    # Implemented)." The SCIM client has no call for /Me.
     assert client.get("/scim/v2/Me").status_code == 501
 
 
-def test_discovery_endpoints_reject_filter(client):
+@pytest.mark.parametrize("model", [Schema, ResourceType, ServiceProviderConfig])
+def test_discovery_endpoints_reject_filter(scim_client, model):
     # RFC7644 §4: "If a 'filter' is provided, the service provider SHOULD
     # respond with HTTP status code 403 (Forbidden) to ensure that clients
     # cannot incorrectly assume that any matching conditions specified in
     # a filter are true."
-    for path in ("/Schemas", "/ResourceTypes", "/ServiceProviderConfig"):
-        r = client.get(f"/scim/v2{path}?filter=" + 'userName%20eq%20"x"')
-        assert r.status_code == 403, path
+    with pytest.raises(SCIMException) as exc_info:
+        scim_client.query(
+            model, query_parameters=SearchRequest(filter='userName eq "x"')
+        )
+    assert exc_info.value.status == 403
 
 
 def test_search_with_no_matches_returns_empty_list(scim_client):
@@ -43,39 +47,35 @@ def test_search_with_no_matches_returns_empty_list(scim_client):
     # return success (HTTP status code 200) with 'totalResults' set to a
     # value of 0."
     response = scim_client.query(
-        User,
+        User[EnterpriseUser],
         query_parameters=SearchRequest(filter='userName eq "nobody-has-this-name"'),
     )
     assert response.total_results == 0
 
 
-def test_patch_is_all_or_nothing(client):
+def test_patch_is_all_or_nothing(scim_client):
     # RFC7644 §3.5.2: "A PATCH request, regardless of the number of
     # operations, SHALL be treated as atomic. If a single operation
     # encounters an error condition, the original SCIM resource MUST be
-    # restored, and a failure status SHALL be returned." The client
-    # validates PatchOp locally before sending it, so this goes through
-    # raw HTTP to reach the server check.
-    r = client.post(
-        "/scim/v2/Users",
-        data=User(user_name="atomic").model_dump_json(
-            scim_ctx=Context.RESOURCE_CREATION_REQUEST
-        ),
-    )
-    uid = r.get_json()["id"]
-
+    # restored, and a failure status SHALL be returned." The client would
+    # refuse to send a PatchOp targeting the read-only "id", so the payload
+    # is sent unchecked to reach the server check.
+    created = scim_client.create(User[EnterpriseUser](user_name="atomic"))
     patch = {
-        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "schemas": [str(PatchOp.__schema__)],
         "Operations": [
             {"op": "replace", "path": "displayName", "value": "Should Not Stick"},
             {"op": "replace", "path": "id", "value": "hacked"},
         ],
     }
-    r = client.patch(f"/scim/v2/Users/{uid}", data=json.dumps(patch))
-    assert r.status_code == 400
+    with pytest.raises(MutabilityException) as exc_info:
+        scim_client.modify(
+            User[EnterpriseUser], created.id, patch, check_request_payload=False
+        )
+    assert exc_info.value.status == 400
 
-    r = client.get(f"/scim/v2/Users/{uid}")
-    assert r.get_json().get("displayName") is None
+    reloaded = scim_client.query(User[EnterpriseUser], created.id)
+    assert reloaded.display_name is None
 
 
 def test_patch_noop_does_not_bump_last_modified(scim_client):
@@ -97,7 +97,9 @@ def test_patch_noop_does_not_bump_last_modified(scim_client):
 
 def test_replace_unknown_resource_returns_404(scim_client):
     with pytest.raises(SCIMException) as exc_info:
-        scim_client.replace(User(id="does-not-exist", user_name="ghost"))
+        scim_client.replace(
+            User[EnterpriseUser](id="does-not-exist", user_name="ghost")
+        )
     assert exc_info.value.status == 404
 
 
@@ -124,7 +126,7 @@ def test_constructor_accepts_app_directly():
     assert "scim2" in app.blueprints
 
 
-def test_with_location_builds_meta_when_missing():
+def test_with_location_builds_meta_when_missing(make_scim_client):
     """`_with_location` must build a `meta` when the storage sets none.
 
     Unlike `InMemoryStorage`, a real backend may not always set `meta`.
@@ -141,9 +143,5 @@ def test_with_location_builds_meta_when_missing():
     app = Flask(__name__)
     SCIM2(storage, [User], app=app)
 
-    r = Client(app).get(f"/scim/v2/Users/{created.id}")
-    assert r.status_code == 200
-    assert (
-        r.get_json()["meta"]["location"]
-        == f"http://localhost/scim/v2/Users/{created.id}"
-    )
+    reloaded = make_scim_client(app).query(User, created.id)
+    assert reloaded.meta.location == f"http://localhost/scim/v2/Users/{created.id}"

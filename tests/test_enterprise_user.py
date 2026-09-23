@@ -1,74 +1,76 @@
-import json
-
 import pytest
 from scim2_models import EnterpriseUser
+from scim2_models import PatchOp
+from scim2_models import PatchOperation
+from scim2_models import ResourceType
+from scim2_models import Schema
+from scim2_models import SchemaExtension
 from scim2_models import ScimProviderError
+from scim2_models import SearchRequest
 from scim2_models import User
 
 from examples.minimal_server import InMemoryStorage
 from scim2_flask import SCIM2
 
-CORE = str(User.__schema__)
-ENTERPRISE = str(EnterpriseUser.__schema__)
-
 
 @pytest.fixture
-def user_id(client):
-    r = client.post(
-        "/scim/v2/Users",
-        data=json.dumps(
-            {
-                "schemas": [CORE, ENTERPRISE],
-                "userName": "bjensen",
-                ENTERPRISE: {"employeeNumber": "42"},
-            }
-        ),
+def user(scim_client):
+    return scim_client.create(
+        User[EnterpriseUser](
+            user_name="bjensen",
+            EnterpriseUser=EnterpriseUser(employee_number="42"),
+        )
     )
-    assert r.status_code == 201
-    return r.get_json()["id"]
 
 
-def test_extension_attributes_are_stored_and_returned(client, user_id):
-    payload = client.get(f"/scim/v2/Users/{user_id}").get_json()
-    assert payload["schemas"] == [CORE, ENTERPRISE]
-    assert payload[ENTERPRISE] == {"employeeNumber": "42"}
+def test_extension_attributes_are_stored_and_returned(scim_client, user):
+    reloaded = scim_client.query(User[EnterpriseUser], user.id)
+    assert reloaded.schemas == [User.__schema__, EnterpriseUser.__schema__]
+    assert reloaded[EnterpriseUser].employee_number == "42"
 
 
-def test_meta_resource_type_is_the_resource_type_name(client, user_id):
+def test_meta_resource_type_is_the_resource_type_name(user):
     # RFC7643 §3.1: "resourceType [...] The name of the resource type of
     # the resource.", not the name of the model carrying the extension.
-    payload = client.get(f"/scim/v2/Users/{user_id}").get_json()
-    assert payload["meta"]["resourceType"] == "User"
+    assert user.meta.resource_type == "User"
 
 
-def test_filter_on_extension_attribute(client, user_id):
-    r = client.get(f'/scim/v2/Users?filter={ENTERPRISE}:employeeNumber eq "42"')
-    assert [u["id"] for u in r.get_json()["Resources"]] == [user_id]
+def test_filter_on_extension_attribute(scim_client, user):
+    response = scim_client.query(
+        User[EnterpriseUser],
+        query_parameters=SearchRequest(
+            filter=f'{EnterpriseUser.__schema__}:employeeNumber eq "42"'
+        ),
+    )
+    assert [u.id for u in response.resources] == [user.id]
 
 
-def test_patch_extension_attribute(client, user_id):
-    patch = {
-        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-        "Operations": [
-            {"op": "replace", "path": f"{ENTERPRISE}:department", "value": "R&D"}
-        ],
-    }
-    r = client.patch(f"/scim/v2/Users/{user_id}", data=json.dumps(patch))
-    assert r.status_code == 200
-    assert r.get_json()[ENTERPRISE] == {"employeeNumber": "42", "department": "R&D"}
+def test_patch_extension_attribute(scim_client, user):
+    patch_op = PatchOp[User[EnterpriseUser]](
+        operations=[
+            PatchOperation(
+                op="replace",
+                path=f"{EnterpriseUser.__schema__}:department",
+                value="R&D",
+            )
+        ]
+    )
+    patched = scim_client.modify(User[EnterpriseUser], user.id, patch_op)
+    assert patched[EnterpriseUser].employee_number == "42"
+    assert patched[EnterpriseUser].department == "R&D"
 
 
-def test_discovery_announces_the_extension(client):
+def test_discovery_announces_the_extension(scim_client):
     # RFC7643 §6: "schemaExtensions [...] A list of URIs of the resource
     # type's schema extensions."
-    resource_type = client.get("/scim/v2/ResourceTypes/User").get_json()
-    assert resource_type["schema"] == CORE
-    assert resource_type["schemaExtensions"] == [
-        {"schema": ENTERPRISE, "required": False}
+    resource_type = scim_client.query(ResourceType, "User")
+    assert resource_type.schema_ == User.__schema__
+    assert resource_type.schema_extensions == [
+        SchemaExtension(schema_=EnterpriseUser.__schema__, required=False)
     ]
 
-    schemas = client.get("/scim/v2/Schemas").get_json()["Resources"]
-    assert ENTERPRISE in [schema["id"] for schema in schemas]
+    schemas = scim_client.query(Schema)
+    assert EnterpriseUser.__schema__ in [schema.id for schema in schemas.resources]
 
 
 def test_bare_resource_and_its_extended_model_cannot_both_be_served():
