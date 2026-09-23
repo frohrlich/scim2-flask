@@ -3,6 +3,7 @@ import json
 import pytest
 from flask import Flask
 from scim2_models import Context
+from scim2_models import EnterpriseUser
 from scim2_models import PatchOp
 from scim2_models import PatchOperation
 from scim2_models import SCIMException
@@ -83,12 +84,14 @@ def test_patch_noop_does_not_bump_last_modified(scim_client):
     # resource, and a success response SHOULD be returned. Unless other
     # operations change the resource, this operation SHALL NOT change the
     # modify timestamp of the resource."
-    created = scim_client.create(User(user_name="noop", display_name="Same"))
-    patch_op = PatchOp[User](
+    created = scim_client.create(
+        User[EnterpriseUser](user_name="noop", display_name="Same")
+    )
+    patch_op = PatchOp[User[EnterpriseUser]](
         operations=[PatchOperation(op="replace", path="displayName", value="Same")]
     )
-    scim_client.modify(User, created.id, patch_op)
-    reloaded = scim_client.query(User, created.id)
+    scim_client.modify(User[EnterpriseUser], created.id, patch_op)
+    reloaded = scim_client.query(User[EnterpriseUser], created.id)
     assert reloaded.meta.last_modified == created.meta.last_modified
 
 
@@ -99,10 +102,11 @@ def test_replace_unknown_resource_returns_404(scim_client):
 
 
 def test_per_resource_search_endpoint(scim_client):
-    created = scim_client.create(User(user_name="searchable"))
-    scim_client.create(User(user_name="other"))
+    created = scim_client.create(User[EnterpriseUser](user_name="searchable"))
+    scim_client.create(User[EnterpriseUser](user_name="other"))
     response = scim_client.search(
-        SearchRequest[User](filter='userName eq "searchable"'), url="/Users/.search"
+        SearchRequest[User[EnterpriseUser]](filter='userName eq "searchable"'),
+        url="/Users/.search",
     )
     assert [u.id for u in response.resources] == [created.id]
 

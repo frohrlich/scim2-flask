@@ -20,6 +20,7 @@ from scim2_models import ChangePassword
 from scim2_models import Context
 from scim2_models import Error
 from scim2_models import ETag
+from scim2_models import Extension
 from scim2_models import Filter
 from scim2_models import ListResponse
 from scim2_models import Meta
@@ -57,6 +58,19 @@ class PayloadTooLargeException(SCIMException):
     status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
 
 
+def _described_models(
+    resource_type: type[Resource[Any]],
+) -> list[type[Resource[Any]] | type[Extension]]:
+    """Return the bare resource and extensions a model is built from.
+
+    ``User[EnterpriseUser]`` gives ``User`` and ``EnterpriseUser``.
+    """
+    extensions = list(resource_type.get_extension_models().values())
+    if not extensions:
+        return [resource_type]
+    return [resource_type.__bases__[0], *extensions]
+
+
 class SCIM2:
     """Flask extension exposing a SCIM 2.0 server backed by a :class:`ScimStorage`.
 
@@ -91,7 +105,21 @@ class SCIM2:
         self.storage = storage
         self.resource_types = list(resource_types) if resource_types else []
         self.url_prefix = url_prefix
-        self.provider = ScimProvider(models=self.resource_types)
+        # ScimProvider takes the bare resources and extensions a service is
+        # built from, and binds them back together with resource types, the
+        # way RFC7643 §6 describes them; a model such as User[EnterpriseUser]
+        # carries both.
+        self.provider = ScimProvider(
+            models=dict.fromkeys(
+                model
+                for resource_type in self.resource_types
+                for model in _described_models(resource_type)
+            ),
+            resource_types=[
+                ResourceType.from_resource(resource_type)
+                for resource_type in self.resource_types
+            ],
+        )
         self._resource_type_by_model = dict(
             zip(self.resource_types, self.provider.resource_types, strict=True)
         )
@@ -173,6 +201,9 @@ class SCIM2:
     def _endpoint(self, resource_type: type[Resource[Any]]) -> str:
         return str(self.get_resource_type(resource_type).endpoint).lstrip("/")
 
+    def _slug(self, resource_type: type[Resource[Any]]) -> str:
+        return str(self.get_resource_type(resource_type).id).lower()
+
     def _resource_union(self) -> Any:
         return reduce(or_, self.resource_types)
 
@@ -199,7 +230,7 @@ class SCIM2:
         self, blueprint: Blueprint, resource_type: type[Resource[Any]]
     ) -> None:
         endpoint = self._endpoint(resource_type)
-        slug = resource_type.__name__.lower()
+        slug = self._slug(resource_type)
 
         def search(search_request: SearchRequest[Any], scim_ctx: Context) -> Any:
             assert self.storage is not None
@@ -630,7 +661,7 @@ class SCIM2:
     def _resource_location_for_id(
         self, resource_type: type[Resource[Any]], resource_id: str
     ) -> str:
-        slug = resource_type.__name__.lower()
+        slug = self._slug(resource_type)
         return url_for(f"scim2.get_{slug}", resource_id=resource_id, _external=True)
 
     def _with_location(
@@ -639,9 +670,10 @@ class SCIM2:
         if resource.meta is None:
             resource.meta = Meta()
         resource.meta.location = self.resource_location(resource_type, resource)
-        resource.meta.resource_type = (
-            resource.meta.resource_type or resource_type.__name__
-        )
+        # RFC7643 §3.1: "resourceType [...] The name of the resource type
+        # of the resource.", which the class name of a model carrying
+        # extensions, such as User[EnterpriseUser], is not.
+        resource.meta.resource_type = self.get_resource_type(resource_type).name
         return resource
 
     def _resource_response(

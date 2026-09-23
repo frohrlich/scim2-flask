@@ -8,7 +8,10 @@ Then, for instance:
 
     curl -X POST http://localhost:5000/scim/v2/Users \\
         -H "Content-Type: application/scim+json" \\
-        -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"], "userName": "bjensen"}'
+        -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
+                         "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+             "userName": "bjensen",
+             "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"employeeNumber": "42"}}'
 
     curl http://localhost:5000/scim/v2/Users
 
@@ -30,6 +33,7 @@ from uuid import uuid4
 from flask import Flask
 from scim2_models import Bulk
 from scim2_models import ComplexAttribute
+from scim2_models import EnterpriseUser
 from scim2_models import ETag
 from scim2_models import Filter
 from scim2_models import Group
@@ -180,9 +184,7 @@ class InMemoryStorage(ScimStorage):
         self._check_user_name_unique(resource_type, resource)
         now = datetime.now(timezone.utc)
         resource.id = str(uuid4())
-        resource.meta = Meta(
-            resource_type=resource_type.__name__, created=now, last_modified=now
-        )
+        resource.meta = Meta(created=now, last_modified=now)
         resource.meta.version = make_version(resource)
         self.resources[resource_type][resource.id] = resource
         return resource
@@ -196,7 +198,6 @@ class InMemoryStorage(ScimStorage):
         self._check_user_name_unique(resource_type, resource)
         created = store[resource.id].meta.created if store[resource.id].meta else None
         resource.meta = Meta(
-            resource_type=resource_type.__name__,
             created=created,
             last_modified=datetime.now(timezone.utc),
         )
@@ -244,7 +245,7 @@ class MinimalSCIM2(SCIM2):
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    scim2 = MinimalSCIM2(InMemoryStorage(), [User, Group])
+    scim2 = MinimalSCIM2(InMemoryStorage(), [User[EnterpriseUser], Group])
     scim2.init_app(app)
     return app
 

@@ -17,6 +17,9 @@ HTTP API.
   with filtering, sorting and pagination delegated to your storage
 - Multiple resource types in a single server (`User`, `Group`, or any
   custom resource), each with its own storage-backed collection
+- Schema extensions: pass a resource with its extensions, such as
+  `User[EnterpriseUser]`, and they are validated, stored, filtered, patched
+  and announced in `/ResourceTypes` and `/Schemas`
 - Resource versioning: conditional `GET` (`If-None-Match` → `304`) and
   conditional writes (`If-Match` → `412`), once your storage populates
   `meta.version`
