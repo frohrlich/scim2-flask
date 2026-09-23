@@ -22,6 +22,7 @@ from scim2_models import Error
 from scim2_models import ETag
 from scim2_models import Extension
 from scim2_models import Filter
+from scim2_models import InvalidFilterException
 from scim2_models import ListResponse
 from scim2_models import Meta
 from scim2_models import Patch
@@ -202,6 +203,25 @@ class SCIM2:
     def _resource_union(self) -> Any:
         return reduce(or_, self.resource_types)
 
+    def _check_filter_supported(self, search_request: SearchRequest[Any]) -> None:
+        """Refuse a filter the service provider does not announce.
+
+        A storage may not filter at all when ``filter.supported`` is false,
+        and :rfc:`RFC7644 §3.4.2.2 <7644#section-3.4.2.2>` forbids ignoring
+        the filter: "When specified, only those resources matching the
+        filter expression SHALL be returned." The same section gives the
+        answer for a filter operation the provider cannot process:
+        "Providers MUST decline to filter results if the specified filter
+        operation is not recognized and return an HTTP 400 error with a
+        "scimType" error of "invalidFilter" and an appropriate
+        human-readable response as per Section 3.12."
+        """
+        config = self.get_service_provider_config().filter
+        if search_request.filter and not (config and config.supported):
+            raise InvalidFilterException(
+                detail="Filtering is not supported by this service provider."
+            )
+
     def _check_if_match(self, resource: Resource[Any]) -> None:
         """:rfc:`RFC7644 §3.14 <7644#section-3.14>`.
 
@@ -228,6 +248,7 @@ class SCIM2:
         slug = self._slug(resource_type)
 
         def search(search_request: SearchRequest[Any], scim_ctx: Context) -> Any:
+            self._check_filter_supported(search_request)
             total, resources = self.storage.search(resource_type, search_request)
             resources = [
                 self._with_location(resource_type, resource) for resource in resources
@@ -411,6 +432,7 @@ class SCIM2:
             search_request = SearchRequest[resource_union].model_validate_json(
                 request.data, scim_ctx=Context.SEARCH_REQUEST
             )
+            self._check_filter_supported(search_request)
             total = 0
             resources: list[Resource[Any]] = []
             for resource_type in self.resource_types:
@@ -469,6 +491,11 @@ class SCIM2:
         @blueprint.post("/Bulk")
         def bulk() -> Any:
             config = self.get_service_provider_config().bulk
+            if config is None or not config.supported:
+                # RFC7644 §3.12, Table 8, "501 (Not Implemented)": "Service
+                # provider does not support the request operation, e.g.,
+                # PATCH."
+                raise HTTPNotImplemented("Bulk operations are not supported")
             # RFC7644 §3.7.4: "The service provider MUST define the
             # maximum number of operations and maximum payload size a
             # client may send in a single request. [...] If either limit

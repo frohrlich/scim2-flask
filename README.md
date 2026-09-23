@@ -28,7 +28,9 @@ HTTP API.
 - SCIM-compliant error responses (`application/scim+json`,
   `urn:...:Error` payloads) for validation, protocol and storage errors
 - Every capability declared in `ServiceProviderConfig` matches what the
-  server actually does; nothing is advertised that isn't implemented
+  server actually does; nothing is advertised that isn't implemented, and a
+  request relying on a capability declared unsupported is refused: a
+  `filter` with `400 invalidFilter`, a `POST /Bulk` with `501`
 
 ## Limitations
 
