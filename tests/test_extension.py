@@ -113,11 +113,9 @@ def test_per_resource_search_endpoint(scim_client):
     assert [u.id for u in response.resources] == [created.id]
 
 
-def test_init_app_requires_storage_and_resource_types():
-    with pytest.raises(RuntimeError):
-        SCIM2(None, [User]).init_app(Flask(__name__))
-    with pytest.raises(RuntimeError):
-        SCIM2(InMemoryStorage(), []).init_app(Flask(__name__))
+def test_requires_at_least_one_resource_type():
+    with pytest.raises(ValueError):
+        SCIM2(InMemoryStorage(), [])
 
 
 def test_constructor_accepts_app_directly():

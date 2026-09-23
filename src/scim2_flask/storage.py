@@ -1,18 +1,26 @@
 from abc import ABC
 from abc import abstractmethod
+from http import HTTPStatus
 from typing import Any
 
 from scim2_models import Resource
+from scim2_models import SCIMException
 from scim2_models import SearchRequest
 
 
-class ResourceNotFoundError(Exception):
-    """Raised by a :class:`ScimStorage` when no resource matches an id."""
+class ResourceNotFoundError(SCIMException):
+    """Raised by a :class:`ScimStorage` when no resource matches an id.
+
+    :rfc:`RFC7644 §3.12 <7644#section-3.12>` answers 404 here, with no
+    ``scimType``.
+    """
+
+    status = HTTPStatus.NOT_FOUND
 
     def __init__(self, resource_type: type[Resource[Any]], resource_id: str):
         self.resource_type = resource_type
         self.resource_id = resource_id
-        super().__init__(f"{resource_type.__name__} {resource_id!r} not found")
+        super().__init__(detail=f"{resource_type.__name__} {resource_id!r} not found")
 
 
 class ScimStorage(ABC):

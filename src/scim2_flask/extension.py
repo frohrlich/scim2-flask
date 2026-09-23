@@ -96,43 +96,39 @@ class SCIM2:
 
     def __init__(
         self,
-        storage: ScimStorage | None = None,
-        resource_types: list[type[Resource[Any]]] | None = None,
+        storage: ScimStorage,
+        resource_types: list[type[Resource[Any]]],
         app: Flask | None = None,
         *,
         url_prefix: str = "/scim/v2",
     ) -> None:
+        if not resource_types:
+            raise ValueError("SCIM2 extension requires at least one resource type")
+
         self.storage = storage
-        self.resource_types = list(resource_types) if resource_types else []
+        self.resource_types = list(resource_types)
         self.url_prefix = url_prefix
         # ScimProvider takes the bare resources and extensions a service is
         # built from, and binds them back together with resource types, the
         # way RFC7643 §6 describes them; a model such as User[EnterpriseUser]
         # carries both.
+        self._resource_type_by_model = {
+            resource_type: ResourceType.from_resource(resource_type)
+            for resource_type in self.resource_types
+        }
         self.provider = ScimProvider(
             models=dict.fromkeys(
                 model
                 for resource_type in self.resource_types
                 for model in _described_models(resource_type)
             ),
-            resource_types=[
-                ResourceType.from_resource(resource_type)
-                for resource_type in self.resource_types
-            ],
-        )
-        self._resource_type_by_model = dict(
-            zip(self.resource_types, self.provider.resource_types, strict=True)
+            resource_types=self._resource_type_by_model.values(),
         )
 
         if app is not None:
             self.init_app(app)
 
     def init_app(self, app: Flask) -> None:
-        if self.storage is None:
-            raise RuntimeError("SCIM2 extension requires a ScimStorage")
-        if not self.resource_types:
-            raise RuntimeError("SCIM2 extension requires at least one resource type")
-
         blueprint = self.create_blueprint()
         app.register_blueprint(blueprint)
         app.extensions[EXTENSION_NAME] = self
@@ -160,9 +156,6 @@ class SCIM2:
         blueprint.register_error_handler(ValidationError, self.handle_validation_error)
         blueprint.register_error_handler(SCIMException, self.handle_scim_exception)
         blueprint.register_error_handler(HTTPException, self.handle_http_exception)
-        blueprint.register_error_handler(
-            ResourceNotFoundError, self.handle_resource_not_found
-        )
 
         for resource_type in self.resource_types:
             self._register_resource_routes(blueprint, resource_type)
@@ -233,7 +226,6 @@ class SCIM2:
         slug = self._slug(resource_type)
 
         def search(search_request: SearchRequest[Any], scim_ctx: Context) -> Any:
-            assert self.storage is not None
             total, resources = self.storage.search(resource_type, search_request)
             resources = [
                 self._with_location(resource_type, resource) for resource in resources
@@ -268,7 +260,6 @@ class SCIM2:
             payload = resource_type.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_CREATION_REQUEST
             )
-            assert self.storage is not None
             created = self.storage.create(resource_type, payload)
             created = self._with_location(resource_type, created)
             return self._resource_response(
@@ -284,7 +275,6 @@ class SCIM2:
             response_parameters = ResponseParameters.model_validate(
                 request.args.to_dict()
             )
-            assert self.storage is not None
             resource = self.storage.query(resource_type, resource_id)
             resource = self._with_location(resource_type, resource)
             return self._resource_response(
@@ -312,7 +302,6 @@ class SCIM2:
             response_parameters = ResponseParameters.model_validate(
                 request.args.to_dict()
             )
-            assert self.storage is not None
             original = self.storage.query(resource_type, resource_id)
             self._check_if_match(original)
             payload = resource_type.model_validate_json(
@@ -336,7 +325,6 @@ class SCIM2:
             response_parameters = ResponseParameters.model_validate(
                 request.args.to_dict()
             )
-            assert self.storage is not None
             resource = self.storage.query(resource_type, resource_id)
             self._check_if_match(resource)
             patch_op = PatchOp[resource_type].model_validate_json(
@@ -358,7 +346,6 @@ class SCIM2:
             )
 
         def delete_view(resource_id: str) -> Any:
-            assert self.storage is not None
             if request.headers.get("If-Match"):
                 self._check_if_match(self.storage.query(resource_type, resource_id))
             self.storage.delete(resource_type, resource_id)
@@ -404,7 +391,7 @@ class SCIM2:
         @blueprint.get("/ResourceTypes")
         def list_resource_types() -> Any:
             _reject_filter()
-            resource_types = [self.get_resource_type(rt) for rt in self.resource_types]
+            resource_types = self.provider.resource_types
             response = ListResponse[ResourceType](
                 total_results=len(resource_types),
                 start_index=1,
@@ -415,10 +402,10 @@ class SCIM2:
 
         @blueprint.post("/.search")
         def search_root() -> Any:
-            search_request = SearchRequest[self._resource_union()].model_validate_json(
+            resource_union = self._resource_union()
+            search_request = SearchRequest[resource_union].model_validate_json(
                 request.data, scim_ctx=Context.SEARCH_REQUEST
             )
-            assert self.storage is not None
             total = 0
             resources: list[Resource[Any]] = []
             for resource_type in self.resource_types:
@@ -430,7 +417,7 @@ class SCIM2:
                     self._with_location(resource_type, resource)
                     for resource in sub_resources
                 )
-            response = ListResponse[self._resource_union()](
+            response = ListResponse[resource_union](
                 total_results=total,
                 start_index=search_request.start_index or 1,
                 items_per_page=len(resources),
@@ -443,10 +430,11 @@ class SCIM2:
 
         @blueprint.get("/ResourceTypes/<name>")
         def get_resource_type_view(name: str) -> Any:
-            for resource_type in self.resource_types:
-                metadata = self.get_resource_type(resource_type)
-                if metadata.id == name:
-                    return metadata.model_dump(scim_ctx=Context.RESOURCE_QUERY_RESPONSE)
+            for resource_type in self.provider.resource_types:
+                if resource_type.id == name:
+                    return resource_type.model_dump(
+                        scim_ctx=Context.RESOURCE_QUERY_RESPONSE
+                    )
             raise ResourceNotFoundError(ResourceType, name)
 
         @blueprint.get("/Schemas")
@@ -559,7 +547,6 @@ class SCIM2:
         result = BulkOperation[self.resource_types[0]](
             method=operation.method, bulk_id=operation.bulk_id
         )
-        assert self.storage is not None
         assert operation.path is not None
 
         resource_type, resource_id = self._resolve_bulk_target(operation.path)
@@ -632,10 +619,6 @@ class SCIM2:
             result.version = updated.meta.version if updated.meta else None
             return result
 
-        except ResourceNotFoundError as exc:
-            result.status = HTTPStatus.NOT_FOUND
-            result.response = Error(status=HTTPStatus.NOT_FOUND, detail=str(exc))
-            return result
         except SCIMException as exc:
             result.status = exc.status
             result.response = exc.to_error()
@@ -717,9 +700,3 @@ class SCIM2:
     def handle_http_exception(self, error: HTTPException) -> tuple[dict, int]:
         scim_error = Error(status=error.code, detail=error.description)
         return scim_error.model_dump(), error.code or 500
-
-    def handle_resource_not_found(
-        self, error: ResourceNotFoundError
-    ) -> tuple[dict, int]:
-        scim_error = Error(status=HTTPStatus.NOT_FOUND, detail=str(error))
-        return scim_error.model_dump(), HTTPStatus.NOT_FOUND
