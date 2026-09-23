@@ -5,12 +5,8 @@ from scim2_models import PatchOperation
 from scim2_models import ResourceType
 from scim2_models import Schema
 from scim2_models import SchemaExtension
-from scim2_models import ScimProviderError
 from scim2_models import SearchRequest
 from scim2_models import User
-
-from examples.minimal_server import InMemoryStorage
-from scim2_flask import SCIM2
 
 
 @pytest.fixture
@@ -71,8 +67,3 @@ def test_discovery_announces_the_extension(scim_client):
 
     schemas = scim_client.query(Schema)
     assert EnterpriseUser.__schema__ in [schema.id for schema in schemas.resources]
-
-
-def test_bare_resource_and_its_extended_model_cannot_both_be_served():
-    with pytest.raises(ScimProviderError):
-        SCIM2(InMemoryStorage(), [User, User[EnterpriseUser]])

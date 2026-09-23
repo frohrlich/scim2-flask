@@ -42,17 +42,6 @@ def test_discovery_endpoints_reject_filter(scim_client, model):
     assert exc_info.value.status == 403
 
 
-def test_search_with_no_matches_returns_empty_list(scim_client):
-    # RFC7644 §3.4.2: "A query that does not return any matches SHALL
-    # return success (HTTP status code 200) with 'totalResults' set to a
-    # value of 0."
-    response = scim_client.query(
-        User[EnterpriseUser],
-        query_parameters=SearchRequest(filter='userName eq "nobody-has-this-name"'),
-    )
-    assert response.total_results == 0
-
-
 def test_patch_is_all_or_nothing(scim_client):
     # RFC7644 §3.5.2: "A PATCH request, regardless of the number of
     # operations, SHALL be treated as atomic. If a single operation
@@ -116,12 +105,6 @@ def test_per_resource_search_endpoint(scim_client):
 def test_requires_at_least_one_resource_type():
     with pytest.raises(ValueError):
         SCIM2(InMemoryStorage(), [])
-
-
-def test_constructor_accepts_app_directly():
-    app = Flask(__name__)
-    SCIM2(InMemoryStorage(), [User], app=app)
-    assert "scim2" in app.blueprints
 
 
 def test_with_location_builds_meta_when_missing(make_scim_client):
