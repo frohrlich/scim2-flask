@@ -64,7 +64,11 @@ def sort_resources(
     sort_by: Path[Any],
     sort_order: "SearchRequest.SortOrder | None" = None,
 ) -> list[Resource[Any]]:
-    """Order resources by an attribute, per :rfc:`RFC7644 §3.4.2.3 <7644#section-3.4.2.3>`.
+    """Order resources by an attribute.
+
+    :rfc:`RFC7644 §3.4.2.3 <7644#section-3.4.2.3>`: "The "sortBy" parameter
+    specifies the attribute whose value SHALL be used to order the returned
+    responses."
 
     :param resources: The SCIM resources to order.
     :param sort_by: The ``sortBy`` query parameter, resolved by the request it
@@ -83,10 +87,10 @@ def sort_resources(
         # string."
         if isinstance(value, str) and not resolved.case_exact:
             value = value.casefold()
-        # RFC7644 §3.4.2.3: "if there is no data for the specified sortBy
-        # value, they are sorted via the sortOrder parameter, i.e., they are
-        # ordered last if ascending and first if descending", which
-        # reversing the whole key achieves.
+        # RFC7644 §3.4.2.3: "For all attribute types, if there is no data
+        # for the specified "sortBy" value, they are sorted via the
+        # "sortOrder" parameter, i.e., they are ordered last if ascending
+        # and first if descending." Reversing the whole key achieves that.
         return (value is None, value if value is not None else "")
 
     return sorted(resources, key=key, reverse=descending)
@@ -116,8 +120,9 @@ def sort_value(resource: Resource[Any], resolved: AttributeBinding) -> Any:
         )
         value = primary if primary is not None else (entries[0] if entries else None)
         if sub_field_name is None and isinstance(value, ComplexAttribute):
-            # RFC7643 §2.4 holds the significant value of a complex entry in a
-            # ``value`` sub-attribute, where a scalar entry is the value itself.
+            # RFC7643 §2.4: "value The attribute's significant value, e.g.,
+            # email address, phone number." A scalar entry is the value
+            # itself.
             sub_field_name = "value"
 
     if value is None or sub_field_name is None:
@@ -128,7 +133,12 @@ def sort_value(resource: Resource[Any], resolved: AttributeBinding) -> Any:
 # -- versioning: adapted from make_etag() in the scim2-models integration
 # guides https://scim2-models.readthedocs.io/en/latest/integrations/helpers.html
 def make_version(resource: Resource[Any]) -> str:
-    """Compute a weak ETag from a resource's content, per :rfc:`RFC7644 §3.14 <7644#section-3.14>`.
+    """Compute a weak ETag from a resource's content.
+
+    :rfc:`RFC7644 §3.14 <7644#section-3.14>`: "Service providers MAY support
+    weak ETags as the preferred mechanism for performing conditional
+    retrievals and ensuring that clients do not inadvertently overwrite each
+    other's changes, respectively."
 
     ``meta`` is excluded so that touching only bookkeeping (e.g.
     ``lastModified``) without a real content change still yields the same

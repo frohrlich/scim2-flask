@@ -43,10 +43,13 @@ def test_conditional_get_returns_304(scim_client):
 
 
 def test_stale_if_match_returns_412(scim_client):
-    # RFC7644 §3.14: "the client MAY supply an If-Match header [...] for
-    # PUT and PATCH operations to ensure that the requested operation
-    # succeeds only if the supplied ETag matches the latest service
-    # provider resource." Table 8 maps the failure to 412.
+    # RFC7644 §3.14: "If the service provider supports versioning of
+    # resources, the client MAY supply an If-Match header (Section 3.1 of
+    # [RFC7232]) for PUT and PATCH operations to ensure that the requested
+    # operation succeeds only if the supplied ETag matches the latest
+    # service provider resource [...]."
+    # RFC7644 §3.12, Table 8, "412 (Precondition Failed)": "Failed to
+    # update. Resource has changed on the server."
     created = scim_client.create(User[EnterpriseUser](user_name="stale"))
     stale_etag = created.meta.version
 

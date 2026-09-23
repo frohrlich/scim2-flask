@@ -50,9 +50,10 @@ EXTENSION_NAME = "scim2"
 class PayloadTooLargeException(SCIMException):
     """A bulk job beyond the limits the service provider announces.
 
-    :rfc:`RFC7644 §3.7.4 <7644#section-3.7.4>` answers 413 here, a status
-    the scimType table of §3.12 does not cover, so the hierarchy
-    scim2-models exposes is extended with it.
+    :rfc:`RFC7644 §3.7.4 <7644#section-3.7.4>`: "If either limit is
+    exceeded, the service provider MUST return HTTP response code 413
+    (Payload Too Large)." No scimType of Table 9 goes with that status, so
+    the hierarchy scim2-models exposes is extended with it.
     """
 
     status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
@@ -109,9 +110,10 @@ class SCIM2:
         self.resource_types = list(resource_types)
         self.url_prefix = url_prefix
         # ScimProvider takes the bare resources and extensions a service is
-        # built from, and binds them back together with resource types, the
-        # way RFC7643 §6 describes them; a model such as User[EnterpriseUser]
-        # carries both.
+        # built from, and binds them back together with resource types; a
+        # model such as User[EnterpriseUser] carries both. RFC7643 §6:
+        # "schemaExtensions A list of URIs of the resource type's schema
+        # extensions."
         self._resource_type_by_model = {
             resource_type: ResourceType.from_resource(resource_type)
             for resource_type in self.resource_types
@@ -204,10 +206,10 @@ class SCIM2:
         """:rfc:`RFC7644 §3.14 <7644#section-3.14>`.
 
         "If the service provider supports versioning of resources, the
-        client MAY supply an If-Match header [...] for PUT and PATCH
-        operations to ensure that the requested operation succeeds only
-        if the supplied ETag matches the latest service provider
-        resource."
+        client MAY supply an If-Match header (Section 3.1 of [RFC7232]) for
+        PUT and PATCH operations to ensure that the requested operation
+        succeeds only if the supplied ETag matches the latest service
+        provider resource [...]."
         """
         if_match = request.headers.get("If-Match")
         if not if_match:
@@ -307,9 +309,12 @@ class SCIM2:
             payload = resource_type.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_REPLACEMENT_REQUEST
             )
-            # RFC 7644 §3.5.1: readOnly attributes (id, meta) are carried over
-            # from the original resource, and immutable ones are checked for
-            # equality; Resource.replace() enforces both in-place on payload.
+            # RFC7644 §3.5.1: "immutable If one or more values are already
+            # set for the attribute, the input value(s) MUST match, or HTTP
+            # status code 400 SHOULD be returned with a "scimType" error code
+            # of "mutability". [...] readOnly Any values provided SHALL be
+            # ignored." Resource.replace() enforces both in-place on payload,
+            # carrying readOnly attributes (id, meta) over from the original.
             payload.replace(original)
             updated = self.storage.update(resource_type, payload)
             updated = self._with_location(resource_type, updated)
@@ -489,8 +494,9 @@ class SCIM2:
                 request.data, scim_ctx=Context.BULK_REQUEST
             )
             operations = bulk_request.operations or []
-            # RFC7644 §3.7.4: "A job holding more operations than
-            # maxOperations is refused whole with a 413."
+            # RFC7644 §3.7.4: "If either limit is exceeded, the service
+            # provider MUST return HTTP response code 413 (Payload Too
+            # Large)."
             if (
                 config.max_operations is not None
                 and len(operations) > config.max_operations
@@ -509,9 +515,10 @@ class SCIM2:
                 results.append(result)
                 if result.status is not None and result.status < HTTPStatus.BAD_REQUEST:
                     continue
-                # RFC7644 §3.7.3: a job performs as many changes as
-                # possible, unless the client caps the failures it
-                # accepts with "failOnErrors".
+                # RFC7644 §3.7: "The service provider MUST continue
+                # performing as many changes as possible and disregard
+                # partial failures. The client MAY override this behavior by
+                # specifying a value for the "failOnErrors" attribute."
                 errors += 1
                 if (
                     bulk_request.fail_on_errors
@@ -536,8 +543,9 @@ class SCIM2:
         """Apply one bulk operation and describe its outcome.
 
         The target is resolved before the operation is applied, so a
-        failure still knows the location :rfc:`RFC7644 §3.7 <7644#section-3.7>`
-        requires of every response but a failed creation.
+        failure still knows its location. :rfc:`RFC7644 §3.7
+        <7644#section-3.7>`: "location The resource endpoint URL. REQUIRED
+        in a response, except in the event of a POST failure."
         """
         # A union type parameter isn't instantiable (BulkOperation[User |
         # Group] resolves to a Union of the two), and every field a result
@@ -552,8 +560,11 @@ class SCIM2:
         resource_type, resource_id = self._resolve_bulk_target(operation.path)
         if resource_type is None:
             if operation.method != BulkOperation.Method.post:
-                # RFC7644 §3.7.3: "location" is REQUIRED for all but a
-                # failed POST, even one no resource type answers.
+                # RFC7644 §3.7.3: "A "location" attribute that includes
+                # the resource's endpoint MUST be returned for all operations
+                # except for failed POST operations (which have no
+                # location)." That holds even when no resource type answers
+                # the path.
                 result.location = url_for(
                     "scim2.not_found",
                     _path=operation.path.lstrip("/"),
@@ -567,10 +578,10 @@ class SCIM2:
             return result
 
         if operation.method != BulkOperation.Method.post:
-            # RFC7644 §3.7.3: "A 'location' attribute that includes the
+            # RFC7644 §3.7.3: "A "location" attribute that includes the
             # resource's endpoint MUST be returned for all operations
             # except for failed POST operations (which have no
-            # location)" -- so it is set once here, ahead of success or
+            # location)." So it is set once here, ahead of success or
             # failure, rather than duplicated in every branch below.
             assert resource_id is not None
             result.location = self._resource_location_for_id(resource_type, resource_id)
@@ -587,9 +598,9 @@ class SCIM2:
             assert resource_id is not None
             original = self.storage.query(resource_type, resource_id)
 
-            # RFC7644 §3.7: "version [...] MAY be used if the service
-            # provider supports entity-tags (ETags) [...] and 'method' is
-            # 'PUT', 'PATCH', or 'DELETE'."
+            # RFC7644 §3.7: "Version MAY be used if the service provider
+            # supports entity-tags (ETags) (Section 2.3 of [RFC7232]) and
+            # "method" is "PUT", "PATCH", or "DELETE"."
             current_version = original.meta.version if original.meta else None
             if (
                 operation.version is not None
@@ -661,9 +672,9 @@ class SCIM2:
         if resource.meta is None:
             resource.meta = Meta()
         resource.meta.location = self.resource_location(resource_type, resource)
-        # RFC7643 §3.1: "resourceType [...] The name of the resource type
-        # of the resource.", which the class name of a model carrying
-        # extensions, such as User[EnterpriseUser], is not.
+        # RFC7643 §3.1: "resourceType The name of the resource type of the
+        # resource." The class name of a model carrying extensions, such as
+        # User[EnterpriseUser], is not that name.
         resource.meta.resource_type = self.get_resource_type(resource_type).name
         return resource
 
@@ -675,10 +686,15 @@ class SCIM2:
     ) -> Response:
         """Build a single-resource response.
 
-        Per :rfc:`RFC7643 §3.1 <7643#section-3.1>`, ``meta.location`` MUST
-        match the ``Content-Location`` response header; a successful
-        creation also gets a ``Location`` header pointing at the new
-        resource.
+        :rfc:`RFC7643 §3.1 <7643#section-3.1>`: "location The URI of the
+        resource being returned. This value MUST be the same as the
+        "Content-Location" HTTP response header (see Section 3.1.4.2 of
+        [RFC7231])."
+
+        :rfc:`RFC7644 §3.3 <7644#section-3.3>`: "The URI of the created
+        resource SHALL include, in the HTTP "Location" header and the HTTP
+        body, a JSON representation [RFC7159] with the attribute
+        "meta.location"."
         """
         response = jsonify(resource.model_dump(**dump_kwargs))
         response.status_code = status

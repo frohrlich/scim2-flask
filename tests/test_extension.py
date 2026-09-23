@@ -31,7 +31,7 @@ def test_me_returns_not_implemented(client):
 
 @pytest.mark.parametrize("model", [Schema, ResourceType, ServiceProviderConfig])
 def test_discovery_endpoints_reject_filter(scim_client, model):
-    # RFC7644 §4: "If a 'filter' is provided, the service provider SHOULD
+    # RFC7644 §4: "If a "filter" is provided, the service provider SHOULD
     # respond with HTTP status code 403 (Forbidden) to ensure that clients
     # cannot incorrectly assume that any matching conditions specified in
     # a filter are true."

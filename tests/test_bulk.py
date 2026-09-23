@@ -11,8 +11,9 @@ from scim2_models import User
 
 
 def test_bulk_dispatches_operations_by_method(scim_client):
-    # RFC7644 §3.7: a bulk job groups independent POST/PUT/PATCH/DELETE
-    # operations in a single request.
+    # RFC7644 §3.7: "The body of a bulk operation contains a set of HTTP
+    # resource operations using one of the HTTP methods supported by the
+    # API, i.e., POST, PUT, PATCH, or DELETE."
     create = scim_client.bulk(
         BulkRequest[User[EnterpriseUser]](
             operations=[
@@ -65,8 +66,8 @@ def test_bulk_dispatches_operations_by_method(scim_client):
 
 
 def test_bulk_rejects_job_exceeding_max_operations(scim_client):
-    # RFC7644 §3.7.4: "A job holding more operations than maxOperations is
-    # refused whole with a 413."
+    # RFC7644 §3.7.4: "If either limit is exceeded, the service provider
+    # MUST return HTTP response code 413 (Payload Too Large)."
     bulk_request = BulkRequest[User[EnterpriseUser]](
         operations=[
             BulkOperation[User[EnterpriseUser]](
@@ -84,8 +85,9 @@ def test_bulk_rejects_job_exceeding_max_operations(scim_client):
 
 
 def test_bulk_stops_after_fail_on_errors(scim_client):
-    # RFC7644 §3.7.3: "failOnErrors" caps the failures a client accepts;
-    # the operations past that cap stay undone.
+    # RFC7644 §3.7: "The "failOnErrors" attribute defines the number of
+    # errors that the service provider should accept before failing the
+    # remaining operations returning the response."
     response = scim_client.bulk(
         BulkRequest[User[EnterpriseUser]](
             fail_on_errors=1,
@@ -106,8 +108,8 @@ def test_bulk_stops_after_fail_on_errors(scim_client):
 
 
 def test_bulk_operation_errors_are_embedded_per_operation(scim_client):
-    # A single operation's failure does not fail the whole job (RFC7644
-    # §3.7.3); its outcome is reported in its own result instead.
+    # RFC7644 §3.7: "The service provider MUST continue performing as many
+    # changes as possible and disregard partial failures."
     scim_client.create(User[EnterpriseUser](user_name="taken"))
 
     response = scim_client.bulk(
@@ -127,8 +129,10 @@ def test_bulk_operation_errors_are_embedded_per_operation(scim_client):
     )
     unknown, dupe = response.operations
     assert unknown.status == 404
-    # RFC7644 §3.7.3: "location" is REQUIRED for every response but a
-    # failed POST, even when the path designates no resource type.
+    # RFC7644 §3.7.3: "A "location" attribute that includes the resource's
+    # endpoint MUST be returned for all operations except for failed POST
+    # operations (which have no location)." That holds even when the path
+    # designates no resource type.
     assert unknown.location == "http://localhost/scim/v2/Bogus/xyz"
     assert dupe.status == 409
     assert dupe.response.scim_type == "uniqueness"
@@ -138,7 +142,7 @@ def test_bulk_rejects_job_exceeding_max_payload_size(scim_client):
     # RFC7644 §3.7.4: "The service provider MUST define the maximum
     # number of operations and maximum payload size a client may send in
     # a single request. [...] If either limit is exceeded, the service
-    # provider MUST return HTTP response code 413."
+    # provider MUST return HTTP response code 413 (Payload Too Large)."
     bulk_request = BulkRequest[User[EnterpriseUser]](
         operations=[
             BulkOperation[User[EnterpriseUser]](
@@ -156,9 +160,9 @@ def test_bulk_rejects_job_exceeding_max_payload_size(scim_client):
 
 
 def test_bulk_stale_operation_version_returns_412(scim_client):
-    # RFC7644 §3.7: "version [...] MAY be used if the service provider
-    # supports entity-tags (ETags) [...] and 'method' is 'PUT', 'PATCH',
-    # or 'DELETE'."
+    # RFC7644 §3.7: "Version MAY be used if the service provider supports
+    # entity-tags (ETags) (Section 2.3 of [RFC7232]) and "method" is "PUT",
+    # "PATCH", or "DELETE"."
     created = scim_client.create(User[EnterpriseUser](user_name="bulk-versioned"))
 
     response = scim_client.bulk(
@@ -177,8 +181,10 @@ def test_bulk_stale_operation_version_returns_412(scim_client):
         )
     )
     assert response.operations[0].status == 412
-    # RFC7644 §3.7.3: "location" is REQUIRED for every response but a
-    # failed POST, so it must be present even on this 412.
+    # RFC7644 §3.7.3: "A "location" attribute that includes the resource's
+    # endpoint MUST be returned for all operations except for failed POST
+    # operations (which have no location)." So it must be present even on
+    # this 412.
     assert response.operations[0].location.endswith(f"/Users/{created.id}")
 
     reloaded = scim_client.query(User[EnterpriseUser], created.id)

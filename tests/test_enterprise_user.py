@@ -26,8 +26,9 @@ def test_extension_attributes_are_stored_and_returned(scim_client, user):
 
 
 def test_meta_resource_type_is_the_resource_type_name(user):
-    # RFC7643 §3.1: "resourceType [...] The name of the resource type of
-    # the resource.", not the name of the model carrying the extension.
+    # RFC7643 §3.1: "resourceType The name of the resource type of the
+    # resource." The name of the model carrying the extension is not that
+    # name.
     assert user.meta.resource_type == "User"
 
 
@@ -57,8 +58,8 @@ def test_patch_extension_attribute(scim_client, user):
 
 
 def test_discovery_announces_the_extension(scim_client):
-    # RFC7643 §6: "schemaExtensions [...] A list of URIs of the resource
-    # type's schema extensions."
+    # RFC7643 §6: "schemaExtensions A list of URIs of the resource type's
+    # schema extensions."
     resource_type = scim_client.query(ResourceType, "User")
     assert resource_type.schema_ == User.__schema__
     assert resource_type.schema_extensions == [

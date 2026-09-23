@@ -11,8 +11,8 @@ from scim2_models import SearchRequest
 class ResourceNotFoundError(SCIMException):
     """Raised by a :class:`ScimStorage` when no resource matches an id.
 
-    :rfc:`RFC7644 §3.12 <7644#section-3.12>` answers 404 here, with no
-    ``scimType``.
+    :rfc:`RFC7644 §3.12 <7644#section-3.12>`, Table 8, "404 (Not Found)":
+    "Specified resource (e.g., User) or endpoint does not exist."
     """
 
     status = HTTPStatus.NOT_FOUND
