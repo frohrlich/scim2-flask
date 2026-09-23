@@ -30,11 +30,19 @@ HTTP API.
 - Every capability declared in `ServiceProviderConfig` matches what the
   server actually does; nothing is advertised that isn't implemented
 
-The one part of the bulk RFC left out is resolving `bulkId:xxx`
-cross-references between operations of the same job (RFC7644 §3.7.2), same
-as the [scim2-models integration
-guides](https://scim2-models.readthedocs.io/en/latest/integrations/helpers.html#bulk-jobs)
-this project draws from.
+## Limitations
+
+- **No authentication or authorization.** Every route is open, and
+  `ServiceProviderConfig` announces no `authenticationSchemes`. Protect the
+  blueprint yourself, for instance with an `app.before_request` hook.
+- **No `/Me`.** It answers 501, as RFC7644 §3.11 allows: "A service
+  provider that does NOT support this feature SHOULD respond with HTTP
+  status code 501 (Not Implemented)."
+- **No `bulkId` cross-references.** RFC7644 §3.7.2: "The service provider
+  MUST replace the string "bulkId:qwerty" with the permanent resource id
+  once created." This is not done, same as in the [scim2-models integration
+  guides](https://scim2-models.readthedocs.io/en/latest/integrations/helpers.html#bulk-jobs)
+  this project draws from.
 
 ## Quickstart
 
@@ -61,8 +69,9 @@ Subclass it to override things like `get_service_provider_config()` or
 `resource_location()`.
 
 See [`examples/minimal_server.py`](examples/minimal_server.py) for a
-runnable example backed by an in-memory `ScimStorage` supporting `User` and
-`Group`, filtering, sorting, `userName` uniqueness and ETags:
+runnable example backed by an in-memory `ScimStorage` supporting `User`
+with the `EnterpriseUser` extension and `Group`, filtering, sorting,
+`userName` uniqueness, ETags and bulk operations:
 
 ```console
 uv run python examples/minimal_server.py
@@ -77,8 +86,8 @@ pip install scim2-flask
 ## Conformance
 
 The test suite runs the example server through
-[scim2-tester](https://github.com/python-scim/scim2-tester), the official
-SCIM conformance checker, in addition to targeted tests for the RFC
+[scim2-tester](https://github.com/python-scim/scim2-tester), a SCIM
+conformance checker, in addition to targeted tests for the RFC
 behaviors it doesn't cover (versioning, bulk, atomic PATCH, discovery
 filtering, ...).
 
@@ -87,7 +96,7 @@ filtering, ...).
 SCIM stands for System for Cross-domain Identity Management, and it is a
 provisioning protocol. Provisioning is the action of managing a set of
 resources across different services, usually users and groups. SCIM is
-often used between Identity Providers and applications in completion of
+often used between Identity Providers and applications, alongside
 standards like OAuth2 and OpenID Connect. It allows users and groups
 creations, modifications and deletions to be synchronized between
 applications.
