@@ -41,13 +41,7 @@ MAX_BULK_PAYLOAD_SIZE = 1_048_576
 
 
 def make_etag(resource: Resource[Any]) -> str:
-    """Compute a weak ETag from a resource's content.
-
-    :rfc:`RFC7644 §3.14 <7644#section-3.14>`: "Service providers MAY support
-    weak ETags as the preferred mechanism for performing conditional
-    retrievals and ensuring that clients do not inadvertently overwrite each
-    other's changes, respectively."
-    """
+    """Compute a weak ETag from a resource's content."""
     content = resource.model_dump(
         mode="json", exclude={"meta": {"version", "location"}}, scim_ctx=None
     )
@@ -56,11 +50,7 @@ def make_etag(resource: Resource[Any]) -> str:
 
 
 class InMemoryStorage(ScimStorage):
-    """A :class:`ScimStorage` storing resources in a plain dict per resource type name.
-
-    A real deployment would replace this with a SQL, LDAP, or any other
-    storage backend.
-    """
+    """Keeps resources in memory; a real deployment would use SQL, LDAP, or another backend."""
 
     def __init__(self) -> None:
         self.resources: dict[str, dict[str, Resource[Any]]] = defaultdict(dict)
@@ -122,7 +112,6 @@ class InMemoryStorage(ScimStorage):
         return resource
 
     def _check_user_name_unique(self, resource: Resource[Any]) -> None:
-        """Enforce the ``Uniqueness.global_`` scim2-models declares on ``User.userName``."""
         user_name = getattr(resource, "user_name", None)
         if user_name is None:
             return
@@ -147,7 +136,6 @@ class InMemoryStorage(ScimStorage):
 
 
 def create_provider() -> ScimProvider:
-    """Describe the resources served and the capabilities of :class:`InMemoryStorage`."""
     return ScimProvider(
         models=[User, EnterpriseUser, Group],
         resource_types=[
