@@ -146,9 +146,9 @@ class SCIM2:
             response.headers["Content-Type"] = "application/scim+json"
             return response
 
-        blueprint.register_error_handler(ValidationError, self.handle_validation_error)
-        blueprint.register_error_handler(SCIMException, self.handle_scim_exception)
-        blueprint.register_error_handler(HTTPException, self.handle_http_exception)
+        blueprint.register_error_handler(ValidationError, self._handle_validation_error)
+        blueprint.register_error_handler(SCIMException, self._handle_scim_exception)
+        blueprint.register_error_handler(HTTPException, self._handle_http_exception)
 
         for resource_type in self.provider.resource_types:
             self._register_resource_routes(blueprint, resource_type)
@@ -207,37 +207,29 @@ class SCIM2:
         slug = self._slug(resource_type)
         return url_for(f"scim2.get_{slug}", resource_id=resource_id, _external=True)
 
-    def handle_validation_error(self, error: ValidationError) -> tuple[dict, int]:
+    # -- Error responses ---------------------------------------------
+
+    def _handle_validation_error(self, error: ValidationError) -> tuple[dict, int]:
         """Turn an invalid payload into a SCIM error response.
 
-        The response reports only the first validation error.
+        The response reports only the first validation error: the SCIM
+        Error resource (RFC7644 §3.12) carries a single detail and
+        scimType, not a list of errors.
         """
         scim_error = Error.from_validation_error(error.errors()[0])
         return scim_error.model_dump(), scim_error.status
 
-    def handle_scim_exception(self, error: SCIMException) -> tuple[dict, int]:
-        """Turn a :class:`~scim2_models.SCIMException` into a SCIM error response."""
+    def _handle_scim_exception(self, error: SCIMException) -> tuple[dict, int]:
+        """Turn a SCIMException into a SCIM error response."""
         scim_error = error.to_error()
         return scim_error.model_dump(), scim_error.status
 
-    def handle_http_exception(
+    def _handle_http_exception(
         self, error: HTTPException
     ) -> tuple[dict, int, list[tuple[str, str]]]:
-        """Turn a Werkzeug :class:`~werkzeug.exceptions.HTTPException` into a SCIM error response.
-
-        The response keeps the headers of the exception, such as the
-        ``WWW-Authenticate`` of an :class:`~werkzeug.exceptions.Unauthorized`.
-        :rfc:`RFC7644 §2 <7644#section-2>`: "As per Section 4.1 of
-        [RFC7235], a SCIM service provider SHALL indicate supported HTTP
-        authentication schemes via the "WWW-Authenticate" header."
-        """
+        """Turn a Werkzeug HTTPException into a SCIM error response."""
         scim_error = Error(status=error.code, detail=error.description)
-        headers = [
-            (name, value)
-            for name, value in error.get_headers()
-            if name.lower() != "content-type"
-        ]
-        return scim_error.model_dump(), error.code or 500, headers
+        return scim_error.model_dump(), error.code or 500, error.get_headers()
 
     # -- Resource types ----------------------------------------------
 
