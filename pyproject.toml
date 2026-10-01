@@ -36,6 +36,7 @@ dev = [
 doc = [
     "shibuya>=2026.7.12",
     "sphinx>=9.0.4",
+    "sphinx-design>=0.6.1",
     "sphinx-issues>=6.0.0",
     "sphinx-paramlinks>=0.6.0",
     "sphinx-reredirects>=1.1.0",

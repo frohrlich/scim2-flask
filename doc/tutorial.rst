@@ -2,9 +2,15 @@ Tutorial
 ========
 
 In this tutorial, we will build a SCIM server that stores users and groups in memory. We will
-then create and read resources with ``curl``, as a SCIM client would.
+then create and read resources with ``curl`` or with
+`scim2-cli <https://scim2-cli.readthedocs.io>`_, as a SCIM client would.
 
-We need Python 3.11 or later, and ``curl``.
+We need Python 3.11 or later, and ``curl``. Install scim2-cli too if you want to follow the
+scim2-cli examples along:
+
+.. code-block:: shell
+
+   pip install scim2-cli
 
 Install scim2-flask
 -------------------
@@ -122,14 +128,29 @@ Create a user
 
 Send a user to the ``/Users`` endpoint:
 
-.. code-block:: shell
+.. tab-set::
+   :class: outline
 
-   curl -X POST http://localhost:5000/scim/v2/Users \
-       -H "Content-Type: application/scim+json" \
-       -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
-                        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
-            "userName": "bjensen",
-            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"employeeNumber": "42"}}'
+   .. tab-item:: scim2-cli
+      :sync: scim2-cli
+
+      .. code-block:: shell
+
+         scim2 --url http://localhost:5000/scim/v2 create user \
+             --user-name bjensen \
+             --enterpriseuser '{"employeeNumber": "42"}'
+
+   .. tab-item:: curl
+      :sync: curl
+
+      .. code-block:: shell
+
+         curl -X POST http://localhost:5000/scim/v2/Users \
+             -H "Content-Type: application/scim+json" \
+             -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
+                              "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+                  "userName": "bjensen",
+                  "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"employeeNumber": "42"}}'
 
 The server answers with the user it stored:
 
@@ -161,11 +182,24 @@ from the ones above.
 Read the user back
 ------------------
 
-Copy the ``location`` from the output, and request it:
+Copy the ``id`` from the output (or the ``location``, for curl), and request it:
 
-.. code-block:: shell
+.. tab-set::
+   :class: outline
 
-   curl http://localhost:5000/scim/v2/Users/fc4cd4d3-3667-4872-9d98-11ca9ad19303
+   .. tab-item:: scim2-cli
+      :sync: scim2-cli
+
+      .. code-block:: shell
+
+         scim2 --url http://localhost:5000/scim/v2 query user fc4cd4d3-3667-4872-9d98-11ca9ad19303
+
+   .. tab-item:: curl
+      :sync: curl
+
+      .. code-block:: shell
+
+         curl http://localhost:5000/scim/v2/Users/fc4cd4d3-3667-4872-9d98-11ca9ad19303
 
 The server answers with the same user:
 
@@ -195,14 +229,29 @@ Create the user again
 
 Send the same user a second time:
 
-.. code-block:: shell
+.. tab-set::
+   :class: outline
 
-   curl -X POST http://localhost:5000/scim/v2/Users \
-       -H "Content-Type: application/scim+json" \
-       -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
-                        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
-            "userName": "bjensen",
-            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"employeeNumber": "42"}}'
+   .. tab-item:: scim2-cli
+      :sync: scim2-cli
+
+      .. code-block:: shell
+
+         scim2 --url http://localhost:5000/scim/v2 create user \
+             --user-name bjensen \
+             --enterpriseuser '{"employeeNumber": "42"}'
+
+   .. tab-item:: curl
+      :sync: curl
+
+      .. code-block:: shell
+
+         curl -X POST http://localhost:5000/scim/v2/Users \
+             -H "Content-Type: application/scim+json" \
+             -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
+                              "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+                  "userName": "bjensen",
+                  "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"employeeNumber": "42"}}'
 
 The storage refuses it, since another user already has this ``userName``:
 
@@ -222,11 +271,24 @@ Create a group
 
 Send a group to the ``/Groups`` endpoint:
 
-.. code-block:: shell
+.. tab-set::
+   :class: outline
 
-   curl -X POST http://localhost:5000/scim/v2/Groups \
-       -H "Content-Type: application/scim+json" \
-       -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"], "displayName": "Engineers"}'
+   .. tab-item:: scim2-cli
+      :sync: scim2-cli
+
+      .. code-block:: shell
+
+         scim2 --url http://localhost:5000/scim/v2 create group --display-name Engineers
+
+   .. tab-item:: curl
+      :sync: curl
+
+      .. code-block:: shell
+
+         curl -X POST http://localhost:5000/scim/v2/Groups \
+             -H "Content-Type: application/scim+json" \
+             -d '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"], "displayName": "Engineers"}'
 
 The server answers with the group it stored:
 
@@ -252,9 +314,22 @@ List the groups
 
 Request the ``/Groups`` endpoint:
 
-.. code-block:: shell
+.. tab-set::
+   :class: outline
 
-   curl http://localhost:5000/scim/v2/Groups
+   .. tab-item:: scim2-cli
+      :sync: scim2-cli
+
+      .. code-block:: shell
+
+         scim2 --url http://localhost:5000/scim/v2 query group
+
+   .. tab-item:: curl
+      :sync: curl
+
+      .. code-block:: shell
+
+         curl http://localhost:5000/scim/v2/Groups
 
 The server answers with a list holding the group we created:
 
@@ -284,8 +359,6 @@ The server answers with a list holding the group we created:
      "startIndex": 1,
      "totalResults": 1
    }
-
-Notice that ``/Groups`` lists only the group: each resource type has its own collection.
 
 What we built
 -------------
