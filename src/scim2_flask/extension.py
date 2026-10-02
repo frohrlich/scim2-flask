@@ -234,7 +234,7 @@ class SCIM2:
     # -- Resource types ----------------------------------------------
 
     def _model(self, resource_type: ResourceType) -> type[Resource[Any]]:
-        """Return the model validating the resources of ``resource_type``."""
+        """Return the model validating the resources of `resource_type`."""
         return cast(type[Resource[Any]], self.provider.model_for(resource_type))
 
     def _endpoint(self, resource_type: ResourceType) -> str:
@@ -251,7 +251,7 @@ class SCIM2:
     def _resource_type_of(self, resource: Resource[Any]) -> ResourceType:
         """Return the resource type a resource from the storage belongs to.
 
-        The storage records it in ``meta.resourceType``, since two resource
+        The storage records it in `meta.resourceType`, since two resource
         types may share a model.
         """
         name = resource.meta.resource_type if resource.meta else None
@@ -264,7 +264,6 @@ class SCIM2:
         )
 
     def _resource_type_at(self, endpoint: str) -> ResourceType | None:
-        """Return the resource type served at ``endpoint``, if any."""
         key = endpoint.lstrip("/").casefold()
         for resource_type in self.provider.resource_types:
             if self._endpoint(resource_type).casefold() == key:
@@ -417,7 +416,7 @@ class SCIM2:
 
     def _register_discovery_routes(self, blueprint: Blueprint) -> None:
         def _reject_filter() -> None:
-            """:rfc:`RFC7644 §4 <7644#section-4>`.
+            """RFC7644 §4.
 
             "Query parameters described in Section 3.4.2, such as
             filtering, sorting, and pagination, SHALL be ignored. If a
@@ -569,11 +568,10 @@ class SCIM2:
     def _check_filter_supported(self, search_request: SearchRequest[Any]) -> None:
         """Refuse a filter the service provider does not announce.
 
-        :rfc:`RFC7644 §3.4.2.2 <7644#section-3.4.2.2>`: "Providers MUST
-        decline to filter results if the specified filter operation is not
-        recognized and return an HTTP 400 error with a "scimType" error of
-        "invalidFilter" and an appropriate human-readable response as per
-        Section 3.12."
+        RFC7644 §3.4.2.2: "Providers MUST decline to filter results if the
+        specified filter operation is not recognized and return an HTTP 400
+        error with a "scimType" error of "invalidFilter" and an appropriate
+        human-readable response as per Section 3.12."
         """
         filter_config = self.get_service_provider_config().filter
         if search_request.filter and not (filter_config and filter_config.supported):
@@ -584,15 +582,14 @@ class SCIM2:
     def _patch_supported(self) -> bool:
         """Tell whether the service provider announces PATCH.
 
-        :rfc:`RFC7644 §3.12 <7644#section-3.12>`, Table 8, "501 (Not
-        Implemented)": "Service provider does not support the request
-        operation, e.g., PATCH."
+        RFC7644 §3.12, Table 8, "501 (Not Implemented)": "Service provider
+        does not support the request operation, e.g., PATCH."
         """
         patch_config = self.get_service_provider_config().patch
         return bool(patch_config and patch_config.supported)
 
     def _check_if_match(self, resource: Resource[Any]) -> None:
-        """:rfc:`RFC7644 §3.14 <7644#section-3.14>`.
+        """RFC7644 §3.14.
 
         "If the service provider supports versioning of resources, the
         client MAY supply an If-Match header (Section 3.1 of [RFC7232]) for
@@ -611,7 +608,7 @@ class SCIM2:
     # -- Bulk operations ---------------------------------------------
 
     def _resolve_bulk_target(self, path: str) -> tuple[ResourceType | None, str | None]:
-        """Resolve a bulk operation's ``path`` to the resource type (and id, if any) it targets."""
+        """Resolve a bulk operation's `path` to the resource type (and id, if any) it targets."""
         resource_type = self._resource_type_at(path)
         if resource_type is not None:
             return resource_type, None
@@ -622,9 +619,9 @@ class SCIM2:
         """Apply one bulk operation, and turn it into the description of its outcome.
 
         The target is resolved before the operation is applied, so a
-        failure still knows its location. :rfc:`RFC7644 §3.7
-        <7644#section-3.7>`: "location The resource endpoint URL. REQUIRED
-        in a response, except in the event of a POST failure."
+        failure still knows its location. RFC7644 §3.7: "location The
+        resource endpoint URL. REQUIRED in a response, except in the event of
+        a POST failure."
         """
         expected_version = operation.version
         operation.version = None
@@ -721,10 +718,7 @@ class SCIM2:
     # -- Responses ---------------------------------------------------
 
     def _with_meta(self, resource_type: ResourceType, resource: Resource[Any]) -> Meta:
-        """Check the ``meta`` of a resource from the storage, and complete it.
-
-        :return: The ``meta`` of the resource, once completed.
-        """
+        """Check the `meta` of a resource from the storage, complete it, and return it."""
         if resource.meta is None or resource.meta.resource_type != resource_type.name:
             name = resource.meta.resource_type if resource.meta else None
             raise ValueError(
@@ -744,20 +738,17 @@ class SCIM2:
     ) -> Response:
         """Build a single-resource response.
 
-        :rfc:`RFC7643 §3.1 <7643#section-3.1>`: "location The URI of the
-        resource being returned. This value MUST be the same as the
-        "Content-Location" HTTP response header (see Section 3.1.4.2 of
-        [RFC7231])."
+        RFC7643 §3.1: "location The URI of the resource being returned. This
+        value MUST be the same as the "Content-Location" HTTP response header
+        (see Section 3.1.4.2 of [RFC7231])."
 
-        :rfc:`RFC7644 §3.3 <7644#section-3.3>`: "The URI of the created
-        resource SHALL include, in the HTTP "Location" header and the HTTP
-        body, a JSON representation [RFC7159] with the attribute
-        "meta.location"."
+        RFC7644 §3.3: "The URI of the created resource SHALL include, in the
+        HTTP "Location" header and the HTTP body, a JSON representation
+        [RFC7159] with the attribute "meta.location"."
 
-        :rfc:`RFC7644 §3.14 <7644#section-3.14>`: "When supported, SCIM ETags
-        MUST be specified as an HTTP header and SHOULD be specified within
-        the 'version' attribute contained in the resource's 'meta'
-        attribute."
+        RFC7644 §3.14: "When supported, SCIM ETags MUST be specified as an
+        HTTP header and SHOULD be specified within the 'version' attribute
+        contained in the resource's 'meta' attribute."
         """
         meta = self._with_meta(resource_type, resource)
         response = jsonify(resource.model_dump(**dump_kwargs))
