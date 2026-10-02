@@ -164,6 +164,68 @@ def test_bulk_operation_errors_are_embedded_per_operation(scim_client):
     assert dupe.response.scim_type == "uniqueness"
 
 
+@pytest.mark.parametrize(
+    ("method", "data"),
+    [
+        ("PUT", User[EnterpriseUser](user_name="whoever")),
+        (
+            "PATCH",
+            PatchOp[User[EnterpriseUser]](
+                operations=[
+                    PatchOperation(op="replace", path="displayName", value="Nobody")
+                ]
+            ),
+        ),
+        ("DELETE", None),
+    ],
+    ids=["PUT", "PATCH", "DELETE"],
+)
+def test_bulk_operation_without_resource_id_is_not_found(scim_client, method, data):
+    # RFC7644 §3.12, Table 8, "404 (Not Found)": "Specified resource (e.g.,
+    # User) or endpoint does not exist." A PUT, PATCH or DELETE on the
+    # endpoint itself designates no resource, as outside a bulk.
+    response = scim_client.bulk(
+        BulkRequest[User[EnterpriseUser]](
+            operations=[
+                BulkOperation[User[EnterpriseUser]](
+                    method=method, bulk_id="no-id", path="/Users", data=data
+                ),
+                BulkOperation[User[EnterpriseUser]](
+                    method="POST",
+                    bulk_id="next",
+                    path="/Users",
+                    data=User[EnterpriseUser](user_name="still-created"),
+                ),
+            ]
+        )
+    )
+    no_id, created = response.operations
+    assert no_id.status == 404
+    assert no_id.location == "http://localhost/scim/v2/Users"
+    assert created.status == 201
+
+
+def test_bulk_post_on_a_resource_is_not_found(scim_client):
+    # As outside a bulk, a POST creates a resource on an endpoint, not at a
+    # given resource location.
+    response = scim_client.bulk(
+        BulkRequest[User[EnterpriseUser]](
+            operations=[
+                BulkOperation[User[EnterpriseUser]](
+                    method="POST",
+                    bulk_id="with-id",
+                    path="/Users/chosen-id",
+                    data=User[EnterpriseUser](user_name="not-created"),
+                )
+            ]
+        )
+    )
+    assert response.operations[0].status == 404
+    # RFC7644 §3.7.3: failed POST operations "have no location".
+    assert response.operations[0].location is None
+    assert scim_client.query(User[EnterpriseUser]).total_results == 0
+
+
 @pytest.mark.parametrize("chunked", [False, True])
 def test_bulk_rejects_job_exceeding_max_payload_size(client, chunked):
     # RFC7644 §3.7.4: "The service provider MUST define the maximum
@@ -218,6 +280,24 @@ def test_bulk_stale_operation_version_returns_412(scim_client):
 
     reloaded = scim_client.query(User[EnterpriseUser], created.id)
     assert reloaded.display_name is None
+
+
+def test_bulk_delete_with_stale_version_returns_412(scim_client):
+    created = scim_client.create(User[EnterpriseUser](user_name="bulk-kept"))
+
+    response = scim_client.bulk(
+        BulkRequest[User[EnterpriseUser]](
+            operations=[
+                BulkOperation[User[EnterpriseUser]](
+                    method="DELETE",
+                    path=f"/Users/{created.id}",
+                    version='W/"stale"',
+                )
+            ]
+        )
+    )
+    assert response.operations[0].status == 412
+    assert scim_client.query(User[EnterpriseUser], created.id).id == created.id
 
 
 def test_bulk_delete_result_carries_no_version(scim_client):

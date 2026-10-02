@@ -37,11 +37,12 @@ from scim2_models import ScimProvider
 from scim2_models import SearchRequest
 from scim2_models import ServiceProviderConfig
 from scim2_models import Sort
+from werkzeug.datastructures import ETags
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
 from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
-from werkzeug.exceptions import PreconditionFailed
+from werkzeug.http import parse_etags
 
 from .storage import ScimStorage
 
@@ -58,6 +59,42 @@ class PayloadTooLargeException(SCIMException):
     """
 
     status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+
+class PreconditionFailedException(SCIMException):
+    """An operation whose expected version is not the resource's current one.
+
+    :rfc:`RFC7644 §3.12 <7644#section-3.12>`, Table 8, "412 (Precondition
+    Failed)": "Failed to update. Resource has changed on the server." No
+    scimType of Table 9 goes with that status, so the hierarchy scim2-models
+    exposes is extended with it.
+    """
+
+    status = HTTPStatus.PRECONDITION_FAILED
+
+
+class NotFoundException(SCIMException):
+    """A bulk operation whose path designates no endpoint or resource.
+
+    :rfc:`RFC7644 §3.12 <7644#section-3.12>`, Table 8, "404 (Not Found)":
+    "Specified resource (e.g., User) or endpoint does not exist." No
+    scimType of Table 9 goes with that status, so the hierarchy scim2-models
+    exposes is extended with it.
+    """
+
+    status = HTTPStatus.NOT_FOUND
+
+
+class NotImplementedException(SCIMException):
+    """An operation the service provider does not announce.
+
+    :rfc:`RFC7644 §3.12 <7644#section-3.12>`, Table 8, "501 (Not
+    Implemented)": "Service provider does not support the request
+    operation, e.g., PATCH." No scimType of Table 9 goes with that status,
+    so the hierarchy scim2-models exposes is extended with it.
+    """
+
+    status = HTTPStatus.NOT_IMPLEMENTED
 
 
 class SCIM2:
@@ -354,13 +391,12 @@ class SCIM2:
             response_parameters = ResponseParameters.model_validate(
                 request.args.to_dict()
             )
-            original = self.storage.query(resource_type, resource_id)
-            self._check_if_match(original)
             payload = model.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_REPLACEMENT_REQUEST
             )
-            payload.replace(original)
-            updated = self.storage.update(resource_type, payload)
+            updated = self._replace(
+                resource_type, resource_id, payload, request.if_match
+            )
             return self._resource_response(
                 resource_type,
                 updated,
@@ -374,18 +410,15 @@ class SCIM2:
             response_parameters = ResponseParameters.model_validate(
                 request.args.to_dict()
             )
-            if not self._patch_supported():
-                raise HTTPNotImplemented("PATCH is not supported")
-            resource = self.storage.query(resource_type, resource_id)
-            self._check_if_match(resource)
             patch_op = PatchOp[model].model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_PATCH_REQUEST
             )
-            if patch_op.patch(resource):
-                resource = self.storage.update(resource_type, resource)
+            patched = self._patch(
+                resource_type, resource_id, patch_op, request.if_match
+            )
             return self._resource_response(
                 resource_type,
-                resource,
+                patched,
                 {
                     "scim_ctx": Context.RESOURCE_PATCH_RESPONSE,
                     "response_parameters": response_parameters,
@@ -393,9 +426,7 @@ class SCIM2:
             )
 
         def delete_view(resource_id: str) -> Any:
-            if request.if_match:
-                self._check_if_match(self.storage.query(resource_type, resource_id))
-            self.storage.delete(resource_type, resource_id)
+            self._delete(resource_type, resource_id, request.if_match)
             return "", HTTPStatus.NO_CONTENT
 
         blueprint.add_url_rule(
@@ -579,141 +610,144 @@ class SCIM2:
                 detail="Filtering is not supported by this service provider."
             )
 
-    def _patch_supported(self) -> bool:
-        """Tell whether the service provider announces PATCH.
+    def _check_patch_supported(self) -> None:
+        """Refuse PATCH if the service provider does not announce it.
 
         RFC7644 §3.12, Table 8, "501 (Not Implemented)": "Service provider
         does not support the request operation, e.g., PATCH."
         """
         patch_config = self.get_service_provider_config().patch
-        return bool(patch_config and patch_config.supported)
+        if not (patch_config and patch_config.supported):
+            raise NotImplementedException(detail="PATCH is not supported")
 
-    def _check_if_match(self, resource: Resource[Any]) -> None:
-        """RFC7644 §3.14.
+    def _check_version(self, resource: Resource[Any], if_match: ETags) -> None:
+        """Refuse an operation if the client's ETags do not match the resource's version.
 
-        "If the service provider supports versioning of resources, the
-        client MAY supply an If-Match header (Section 3.1 of [RFC7232]) for
-        PUT and PATCH operations to ensure that the requested operation
-        succeeds only if the supplied ETag matches the latest service
-        provider resource [...]."
+        RFC7644 §3.14: "If the service provider supports versioning of
+        resources, the client MAY supply an If-Match header (Section 3.1 of
+        [RFC7232]) for PUT and PATCH operations to ensure that the requested
+        operation succeeds only if the supplied ETag matches the latest
+        service provider resource [...]."
+
+        RFC7644 §3.7: "Version MAY be used if the service provider supports
+        entity-tags (ETags) (Section 2.3 of [RFC7232]) and "method" is "PUT",
+        "PATCH", or "DELETE"."
         """
-        if not request.if_match:
+        if not if_match:
             return
         version = resource.meta.version if resource.meta else None
         if version is None:
             return
-        if not request.if_match.contains_raw(version):
-            raise PreconditionFailed("ETag mismatch")
+        if not if_match.contains_raw(version):
+            raise PreconditionFailedException(detail="ETag mismatch")
+
+    # -- Operations --------------------------------------------------
+
+    def _replace(
+        self,
+        resource_type: ResourceType,
+        resource_id: str,
+        replacement: Resource[Any],
+        if_match: ETags,
+    ) -> Resource[Any]:
+        """Replace a resource, and return the stored representation."""
+        original = self.storage.query(resource_type, resource_id)
+        self._check_version(original, if_match)
+        replacement.replace(original)
+        return self.storage.update(resource_type, replacement)
+
+    def _patch(
+        self,
+        resource_type: ResourceType,
+        resource_id: str,
+        patch_op: PatchOp[Any],
+        if_match: ETags,
+    ) -> Resource[Any]:
+        """Patch a resource, and return the stored representation."""
+        self._check_patch_supported()
+        resource = self.storage.query(resource_type, resource_id)
+        self._check_version(resource, if_match)
+        if patch_op.patch(resource):
+            resource = self.storage.update(resource_type, resource)
+        return resource
+
+    def _delete(
+        self, resource_type: ResourceType, resource_id: str, if_match: ETags
+    ) -> None:
+        """Delete a resource.
+
+        The resource is only read to check its version: the storage reports
+        a missing one on its own.
+        """
+        if if_match:
+            self._check_version(
+                self.storage.query(resource_type, resource_id), if_match
+            )
+        self.storage.delete(resource_type, resource_id)
 
     # -- Bulk operations ---------------------------------------------
 
-    def _resolve_bulk_target(self, path: str) -> tuple[ResourceType | None, str | None]:
-        """Resolve a bulk operation's `path` to the resource type (and id, if any) it targets."""
-        resource_type = self._resource_type_at(path)
-        if resource_type is not None:
-            return resource_type, None
+    def _locate_bulk_resource(
+        self, operation: BulkOperation[Any]
+    ) -> tuple[ResourceType, str]:
+        """Return the resource type and id a bulk PUT, PATCH or DELETE targets.
+
+        The location of the operation is set first, as it is due even if
+        the operation fails. RFC7644 §3.7.3: "A "location" attribute that
+        includes the resource's endpoint MUST be returned for all operations
+        except for failed POST operations (which have no location)."
+        """
+        path = operation.path
         endpoint, _, resource_id = path.rpartition("/")
-        return self._resource_type_at(endpoint), resource_id
+        resource_type = self._resource_type_at(endpoint)
+        if resource_type is None:
+            operation.location = url_for(
+                "scim2.not_found", _path=path.lstrip("/"), _external=True
+            )
+            raise NotFoundException(detail=f"No resource at {path!r}")
+        operation.location = self.resource_location(resource_type, resource_id)
+        return resource_type, resource_id
 
     def _run_bulk_operation(self, operation: BulkOperation[Any]) -> None:
-        """Apply one bulk operation, and turn it into the description of its outcome.
-
-        The target is resolved before the operation is applied, so a
-        failure still knows its location. RFC7644 §3.7: "location The
-        resource endpoint URL. REQUIRED in a response, except in the event of
-        a POST failure."
-        """
-        expected_version = operation.version
+        """Apply one bulk operation, and turn it into the description of its outcome."""
+        if_match = parse_etags(operation.version)
         operation.version = None
-        assert operation.path is not None
-
-        resource_type, resource_id = self._resolve_bulk_target(operation.path)
-        if resource_type is None:
-            if operation.method != BulkOperation.Method.post:
-                # RFC7644 §3.7.3: "A "location" attribute that includes
-                # the resource's endpoint MUST be returned for all operations
-                # except for failed POST operations (which have no
-                # location)." That holds even when no resource type answers
-                # the path.
-                operation.location = url_for(
-                    "scim2.not_found",
-                    _path=operation.path.lstrip("/"),
-                    _external=True,
-                )
-            operation.status = HTTPStatus.NOT_FOUND
-            operation.response = Error(
-                status=HTTPStatus.NOT_FOUND,
-                detail=f"{operation.path!r} does not designate a known resource type",
-            )
-            return
-
-        if operation.method != BulkOperation.Method.post:
-            # RFC7644 §3.7.3: "A "location" attribute that includes the
-            # resource's endpoint MUST be returned for all operations
-            # except for failed POST operations (which have no
-            # location)." So it is set once here, ahead of success or
-            # failure, rather than duplicated in every branch below.
-            assert resource_id is not None
-            operation.location = self.resource_location(resource_type, resource_id)
-
-        if (
-            operation.method == BulkOperation.Method.patch
-            and not self._patch_supported()
-        ):
-            operation.status = HTTPStatus.NOT_IMPLEMENTED
-            operation.response = Error(
-                status=HTTPStatus.NOT_IMPLEMENTED, detail="PATCH is not supported"
-            )
-            return
 
         try:
             if operation.method == BulkOperation.Method.post:
+                resource_type = self._resource_type_at(operation.path)
+                if resource_type is None:
+                    raise NotFoundException(detail=f"No endpoint at {operation.path!r}")
                 created = self.storage.create(resource_type, operation.data)
                 meta = self._with_meta(resource_type, created)
                 operation.status = HTTPStatus.CREATED
                 operation.location = meta.location
                 operation.version = meta.version
-                return
 
-            assert resource_id is not None
-            original = self.storage.query(resource_type, resource_id)
-
-            # RFC7644 §3.7: "Version MAY be used if the service provider
-            # supports entity-tags (ETags) (Section 2.3 of [RFC7232]) and
-            # "method" is "PUT", "PATCH", or "DELETE"."
-            current_version = original.meta.version if original.meta else None
-            if (
-                expected_version is not None
-                and current_version is not None
-                and expected_version != current_version
-            ):
-                operation.status = HTTPStatus.PRECONDITION_FAILED
-                operation.response = Error(
-                    status=HTTPStatus.PRECONDITION_FAILED, detail="ETag mismatch"
+            elif operation.method == BulkOperation.Method.put:
+                resource_type, resource_id = self._locate_bulk_resource(operation)
+                replaced = self._replace(
+                    resource_type, resource_id, operation.data, if_match
                 )
-                return
+                operation.status = HTTPStatus.OK
+                operation.version = self._with_meta(resource_type, replaced).version
 
-            if operation.method == BulkOperation.Method.delete:
-                self.storage.delete(resource_type, resource_id)
+            elif operation.method == BulkOperation.Method.patch:
+                resource_type, resource_id = self._locate_bulk_resource(operation)
+                patched = self._patch(
+                    resource_type, resource_id, operation.data, if_match
+                )
+                operation.status = HTTPStatus.OK
+                operation.version = self._with_meta(resource_type, patched).version
+
+            elif operation.method == BulkOperation.Method.delete:
+                resource_type, resource_id = self._locate_bulk_resource(operation)
+                self._delete(resource_type, resource_id, if_match)
                 operation.status = HTTPStatus.NO_CONTENT
-                return
-
-            if operation.method == BulkOperation.Method.patch:
-                if operation.data.patch(original):
-                    original = self.storage.update(resource_type, original)
-            else:
-                operation.data.replace(original)
-                original = self.storage.update(resource_type, operation.data)
-
-            meta = self._with_meta(resource_type, original)
-            operation.status = HTTPStatus.OK
-            operation.version = meta.version
-            return
 
         except SCIMException as exc:
             operation.status = exc.status
             operation.response = exc.to_error()
-            return
 
     # -- Responses ---------------------------------------------------
 
