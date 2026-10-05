@@ -547,20 +547,16 @@ class SCIM2:
             # client may send in a single request. [...] If either limit
             # is exceeded, the service provider MUST return HTTP response
             # code 413 (Payload Too Large)."
-            payload_size = len(request.data)
-            if (
-                bulk_config.max_payload_size is not None
-                and payload_size > bulk_config.max_payload_size
+            # Werkzeug refuses a body beyond this limit with a 413. A
+            # stricter limit of the application is kept.
+            if bulk_config.max_payload_size is not None and (
+                request.max_content_length is None
+                or bulk_config.max_payload_size < request.max_content_length
             ):
-                raise PayloadTooLargeException(
-                    detail=(
-                        "The size of the bulk operation exceeds the "
-                        f"maxPayloadSize ({bulk_config.max_payload_size})."
-                    )
-                )
+                request.max_content_length = bulk_config.max_payload_size
 
             bulk_request = BulkRequest[self._resource_union()].model_validate_json(
-                request.data, scim_ctx=Context.BULK_REQUEST
+                request.get_data(), scim_ctx=Context.BULK_REQUEST
             )
             operations = bulk_request.operations or []
             # RFC7644 §3.7.4: "If either limit is exceeded, the service

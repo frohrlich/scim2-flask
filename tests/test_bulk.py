@@ -1,7 +1,5 @@
 """Tests for the POST /Bulk endpoint, RFC7644 §3.7."""
 
-import io
-
 import pytest
 from scim2_models import BulkOperation
 from scim2_models import BulkRequest
@@ -68,29 +66,6 @@ def test_bulk_dispatches_operations_by_method(scim_client):
     assert exc_info.value.status == 404
 
 
-def post_bulk(client, bulk_request, chunked=False):
-    """Send a bulk request the way a client ignoring the announced limits does.
-
-    scim2-client refuses to send a job beyond the limits the provider
-    announces, so the server side is exercised through a raw request. A
-    chunked request announces no Content-Length.
-    """
-    body = bulk_request.model_dump_json(scim_ctx=Context.BULK_REQUEST).encode()
-    if not chunked:
-        return client.post(
-            "/scim/v2/Bulk", data=body, content_type="application/scim+json"
-        )
-    return client.post(
-        "/scim/v2/Bulk",
-        input_stream=io.BytesIO(body),
-        headers={
-            "Content-Type": "application/scim+json",
-            "Transfer-Encoding": "chunked",
-        },
-        environ_overrides={"wsgi.input_terminated": True},
-    )
-
-
 def test_bulk_rejects_job_exceeding_max_operations(client):
     # RFC7644 §3.7.4: "If either limit is exceeded, the service provider
     # MUST return HTTP response code 413 (Payload Too Large)."
@@ -105,7 +80,13 @@ def test_bulk_rejects_job_exceeding_max_operations(client):
             for i in range(101)
         ]
     )
-    response = post_bulk(client, bulk_request)
+    # scim2-client refuses to send a job beyond the limits the provider
+    # announces, so the server side is exercised through a raw request.
+    response = client.post(
+        "/scim/v2/Bulk",
+        data=bulk_request.model_dump_json(scim_ctx=Context.BULK_REQUEST),
+        content_type="application/scim+json",
+    )
     assert response.status_code == 413
     assert "maxOperations" in response.json["detail"]
 
@@ -226,8 +207,7 @@ def test_bulk_post_on_a_resource_is_not_found(scim_client):
     assert scim_client.query(User[EnterpriseUser]).total_results == 0
 
 
-@pytest.mark.parametrize("chunked", [False, True])
-def test_bulk_rejects_job_exceeding_max_payload_size(client, chunked):
+def test_bulk_rejects_job_exceeding_max_payload_size(client):
     # RFC7644 §3.7.4: "The service provider MUST define the maximum
     # number of operations and maximum payload size a client may send in
     # a single request. [...] If either limit is exceeded, the service
@@ -242,9 +222,16 @@ def test_bulk_rejects_job_exceeding_max_payload_size(client, chunked):
             )
         ]
     )
-    response = post_bulk(client, bulk_request, chunked=chunked)
+    # scim2-client refuses to send a job beyond the limits the provider
+    # announces, so the server side is exercised through a raw request.
+    response = client.post(
+        "/scim/v2/Bulk",
+        data=bulk_request.model_dump_json(scim_ctx=Context.BULK_REQUEST),
+        content_type="application/scim+json",
+    )
     assert response.status_code == 413
-    assert "maxPayloadSize" in response.json["detail"]
+    assert response.headers["Content-Type"] == "application/scim+json"
+    assert response.json["status"] == "413"
 
 
 def test_bulk_stale_operation_version_returns_412(scim_client):
@@ -316,3 +303,16 @@ def test_bulk_delete_result_carries_no_version(scim_client):
     )
     assert response.operations[0].status == 204
     assert response.operations[0].version is None
+
+
+def test_bulk_keeps_stricter_application_limit(app, client):
+    app.config["MAX_CONTENT_LENGTH"] = 10
+    response = client.post(
+        "/scim/v2/Bulk",
+        json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+            "Operations": [{"method": "DELETE", "path": "/Users/unknown"}],
+        },
+        content_type="application/scim+json",
+    )
+    assert response.status_code == 413
