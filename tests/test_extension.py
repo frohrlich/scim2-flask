@@ -364,3 +364,48 @@ def test_http_exception_headers_are_kept():
     assert response.headers["WWW-Authenticate"] == "Bearer"
     assert response.headers["Content-Type"] == "application/scim+json"
     assert response.json["detail"] == "Missing or invalid token"
+
+
+def test_several_instances_serve_one_application():
+    """Instances with their own name serve their own resources, side by side."""
+    app = Flask(__name__)
+    tenant_a = SCIM2(
+        InMemoryStorage(),
+        create_provider(),
+        app=app,
+        url_prefix="/a/scim/v2",
+        name="tenant_a",
+    )
+    tenant_b = SCIM2(
+        InMemoryStorage(),
+        create_provider(),
+        app=app,
+        url_prefix="/b/scim/v2",
+        name="tenant_b",
+    )
+    assert app.extensions["scim2"] == {"tenant_a": tenant_a, "tenant_b": tenant_b}
+    client = Client(app)
+
+    created = client.post(
+        "/a/scim/v2/Users",
+        json={"schemas": [User.__schema__], "userName": "bjensen"},
+        content_type="application/scim+json",
+    )
+    assert created.status_code == 201
+    assert created.json["meta"]["location"] == (
+        f"http://localhost/a/scim/v2/Users/{created.json['id']}"
+    )
+    assert client.get("/a/scim/v2/Users").json["totalResults"] == 1
+    assert client.get("/b/scim/v2/Users").json["totalResults"] == 0
+
+    bulk = client.post(
+        "/b/scim/v2/Bulk",
+        json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+            "Operations": [{"method": "DELETE", "path": "/Unknown/x"}],
+        },
+        content_type="application/scim+json",
+    )
+    assert (
+        bulk.json["Operations"][0]["location"] == "http://localhost/b/scim/v2/Unknown/x"
+    )

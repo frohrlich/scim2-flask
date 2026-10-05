@@ -128,6 +128,9 @@ class SCIM2:
         resource type.
     :param app: The application to register on right away, if any.
     :param url_prefix: The URL prefix the SCIM endpoints are served under.
+    :param name: The name of the blueprint, and so the prefix of its
+        endpoints. Give each instance its own name to serve several SCIM
+        servers from one application.
     """
 
     def __init__(
@@ -137,6 +140,7 @@ class SCIM2:
         app: Flask | None = None,
         *,
         url_prefix: str = "/scim/v2",
+        name: str = "scim2",
     ) -> None:
         if not provider.resource_types:
             raise ValueError("SCIM2 extension requires at least one resource type")
@@ -144,6 +148,7 @@ class SCIM2:
         self.storage = storage
         self.provider = provider
         self.url_prefix = url_prefix
+        self.name = name
 
         if app is not None:
             self.init_app(app)
@@ -151,11 +156,11 @@ class SCIM2:
     def init_app(self, app: Flask) -> None:
         """Register the SCIM blueprint on ``app``, under ``url_prefix``.
 
-        The extension is then available as ``app.extensions["scim2"]``.
+        The extension is then available as ``app.extensions["scim2"][name]``.
         """
         blueprint = self.create_blueprint()
         app.register_blueprint(blueprint)
-        app.extensions[EXTENSION_NAME] = self
+        app.extensions.setdefault(EXTENSION_NAME, {})[self.name] = self
 
     def create_blueprint(self) -> Blueprint:
         """Return the :class:`~flask.Blueprint` serving the SCIM endpoints.
@@ -164,7 +169,7 @@ class SCIM2:
         resource type the provider declares, and the error handlers turning
         failures into SCIM :class:`~scim2_models.Error` payloads.
         """
-        blueprint = Blueprint("scim2", __name__, url_prefix=self.url_prefix)
+        blueprint = Blueprint(self.name, __name__, url_prefix=self.url_prefix)
 
         # Payloads are read and written under the provider, and so under the
         # policy it declares.
@@ -242,7 +247,9 @@ class SCIM2:
         Every ``meta.location`` and bulk operation ``location`` is built here.
         """
         slug = self._slug(resource_type)
-        return url_for(f"scim2.get_{slug}", resource_id=resource_id, _external=True)
+        return url_for(
+            f"{self.name}.get_{slug}", resource_id=resource_id, _external=True
+        )
 
     # -- Error responses ---------------------------------------------
 
@@ -702,7 +709,7 @@ class SCIM2:
         resource_type = self._resource_type_at(endpoint)
         if resource_type is None:
             operation.location = url_for(
-                "scim2.not_found", _path=path.lstrip("/"), _external=True
+                f"{self.name}.not_found", _path=path.lstrip("/"), _external=True
             )
             raise NotFoundException(detail=f"No resource at {path!r}")
         operation.location = self.resource_location(resource_type, resource_id)

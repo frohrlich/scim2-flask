@@ -18,6 +18,21 @@ The extension serves the endpoints under ``/scim/v2`` by default. Pass another `
    >>> app.test_client().get("/api/scim/Users").status_code
    200
 
+Serve several SCIM servers
+--------------------------
+
+To serve several SCIM servers from one application, such as one per tenant, give each instance
+its own prefix and its own ``name``. The name is the one of the blueprint, and the key of the
+instance in ``app.extensions["scim2"]``:
+
+.. doctest::
+
+   >>> app = Flask(__name__)
+   >>> tenant_a = SCIM2(InMemoryStorage(), create_provider(), app=app, url_prefix="/a/scim/v2", name="tenant_a")
+   >>> tenant_b = SCIM2(InMemoryStorage(), create_provider(), app=app, url_prefix="/b/scim/v2", name="tenant_b")
+   >>> app.extensions["scim2"]["tenant_b"] is tenant_b
+   True
+
 Change the location of the resources
 ------------------------------------
 
