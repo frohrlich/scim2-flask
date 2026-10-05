@@ -20,8 +20,7 @@ repos:
       - id: end-of-file-fixer
         exclude: "\\.svg$|\\.map$|\\.min\\.css$|\\.min\\.js$|\\.po$|\\.pot$"
       - id: check-toml
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 8e5c80792e2ec0c87804d8ef915bf35e2caea6da # frozen: v1.20.0
+  - repo: local
     hooks:
       - id: mypy
         name: mypy
