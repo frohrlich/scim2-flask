@@ -46,7 +46,7 @@ class ScimStorage(ABC):
     def search(
         self,
         resource_types: list[ResourceType],
-        search_request: SearchRequest,
+        search_request: SearchRequest[Any],
     ) -> tuple[int, list[Resource[Any]]]:
         """Return the total count and one page of the matching resources.
 

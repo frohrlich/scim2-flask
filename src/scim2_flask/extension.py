@@ -4,6 +4,7 @@ from functools import reduce
 from http import HTTPStatus
 from operator import or_
 from typing import Any
+from typing import TypeVar
 from typing import cast
 
 from flask import Blueprint
@@ -46,10 +47,18 @@ from werkzeug.exceptions import NotFound
 from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
 from werkzeug.http import parse_etags
 from werkzeug.routing import MapAdapter
+from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .storage import ScimStorage
 
 EXTENSION_NAME = "scim2"
+
+GenericT = TypeVar("GenericT")
+
+
+def _parametrize(generic: type[GenericT], parameter: Any) -> type[GenericT]:
+    """Parametrize a generic class with a type only known at runtime."""
+    return cast(type[GenericT], cast(Any, generic)[parameter])
 
 
 class PayloadTooLargeException(SCIMException):
@@ -266,7 +275,9 @@ class SCIM2:
 
     # -- Error responses ---------------------------------------------
 
-    def _handle_validation_error(self, error: ValidationError) -> tuple[dict, int]:
+    def _handle_validation_error(
+        self, error: ValidationError
+    ) -> tuple[dict[str, Any], int]:
         """Turn an invalid payload into a SCIM error response.
 
         The response reports only the first validation error: the SCIM
@@ -274,16 +285,20 @@ class SCIM2:
         scimType, not a list of errors.
         """
         scim_error = Error.from_validation_error(error.errors()[0])
+        assert scim_error.status is not None
         return scim_error.model_dump(), scim_error.status
 
-    def _handle_scim_exception(self, error: SCIMException) -> tuple[dict, int]:
+    def _handle_scim_exception(
+        self, error: SCIMException
+    ) -> tuple[dict[str, Any], int]:
         """Turn a SCIMException into a SCIM error response."""
         scim_error = error.to_error()
+        assert scim_error.status is not None
         return scim_error.model_dump(), scim_error.status
 
     def _handle_http_exception(
         self, error: HTTPException
-    ) -> tuple[dict, int, list[tuple[str, str]]]:
+    ) -> tuple[dict[str, Any], int, list[tuple[str, str]]]:
         """Turn a Werkzeug HTTPException into a SCIM error response."""
         scim_error = Error(status=error.code, detail=error.description)
         return scim_error.model_dump(), error.code or 500, error.get_headers()
@@ -341,7 +356,7 @@ class SCIM2:
             total, resources = self.storage.search([resource_type], search_request)
             for resource in resources:
                 self._with_meta(resource_type, resource)
-            response = ListResponse[model](
+            response = _parametrize(ListResponse, model)(
                 total_results=total,
                 start_index=search_request.start_index or 1,
                 items_per_page=len(resources),
@@ -353,18 +368,20 @@ class SCIM2:
             )
 
         def list_view() -> Any:
-            search_request = SearchRequest[model].model_validate(request.args.to_dict())
+            search_request = _parametrize(SearchRequest, model).model_validate(
+                request.args.to_dict()
+            )
             return search(search_request, Context.RESOURCE_QUERY_RESPONSE)
 
         def search_view() -> Any:
-            search_request = SearchRequest[model].model_validate_json(
+            search_request = _parametrize(SearchRequest, model).model_validate_json(
                 request.data, scim_ctx=Context.SEARCH_REQUEST
             )
             return search(search_request, Context.SEARCH_RESPONSE)
 
         def create_view() -> Any:
-            response_parameters = ResponseParameters.model_validate(
-                request.args.to_dict()
+            response_parameters: ResponseParameters[Any] = (
+                ResponseParameters.model_validate(request.args.to_dict())
             )
             payload = model.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_CREATION_REQUEST
@@ -381,8 +398,8 @@ class SCIM2:
             )
 
         def get_view(resource_id: str) -> Any:
-            response_parameters = ResponseParameters.model_validate(
-                request.args.to_dict()
+            response_parameters: ResponseParameters[Any] = (
+                ResponseParameters.model_validate(request.args.to_dict())
             )
             resource = self.storage.query(resource_type, resource_id)
             return self._resource_response(
@@ -408,8 +425,8 @@ class SCIM2:
         )
 
         def replace_view(resource_id: str) -> Any:
-            response_parameters = ResponseParameters.model_validate(
-                request.args.to_dict()
+            response_parameters: ResponseParameters[Any] = (
+                ResponseParameters.model_validate(request.args.to_dict())
             )
             payload = model.model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_REPLACEMENT_REQUEST
@@ -427,10 +444,10 @@ class SCIM2:
             )
 
         def patch_view(resource_id: str) -> Any:
-            response_parameters = ResponseParameters.model_validate(
-                request.args.to_dict()
+            response_parameters: ResponseParameters[Any] = (
+                ResponseParameters.model_validate(request.args.to_dict())
             )
-            patch_op = PatchOp[model].model_validate_json(
+            patch_op = _parametrize(PatchOp, model).model_validate_json(
                 request.data, scim_ctx=Context.RESOURCE_PATCH_REQUEST
             )
             patched = self._patch(
@@ -494,23 +511,23 @@ class SCIM2:
                 total_results=len(resource_types),
                 start_index=1,
                 items_per_page=len(resource_types),
-                resources=resource_types,
+                resources=list(resource_types),
             )
             return response.model_dump(scim_ctx=Context.RESOURCE_QUERY_RESPONSE)
 
         @blueprint.post("/.search")
         def search_root() -> Any:
             resource_union = self._resource_union()
-            search_request = SearchRequest[resource_union].model_validate_json(
-                request.data, scim_ctx=Context.SEARCH_REQUEST
-            )
+            search_request = _parametrize(
+                SearchRequest, resource_union
+            ).model_validate_json(request.data, scim_ctx=Context.SEARCH_REQUEST)
             self._check_filter_supported(search_request)
             total, resources = self.storage.search(
                 list(self.provider.resource_types), search_request
             )
             for resource in resources:
                 self._with_meta(self._resource_type_of(resource), resource)
-            response = ListResponse[resource_union](
+            response = _parametrize(ListResponse, resource_union)(
                 total_results=total,
                 start_index=search_request.start_index or 1,
                 items_per_page=len(resources),
@@ -538,7 +555,7 @@ class SCIM2:
                 total_results=len(schemas),
                 start_index=1,
                 items_per_page=len(schemas),
-                resources=schemas,
+                resources=list(schemas),
             )
             return response.model_dump(scim_ctx=Context.RESOURCE_QUERY_RESPONSE)
 
@@ -568,9 +585,9 @@ class SCIM2:
             ):
                 request.max_content_length = bulk_config.max_payload_size
 
-            bulk_request = BulkRequest[self._resource_union()].model_validate_json(
-                request.get_data(), scim_ctx=Context.BULK_REQUEST
-            )
+            bulk_request = _parametrize(
+                BulkRequest, self._resource_union()
+            ).model_validate_json(request.get_data(), scim_ctx=Context.BULK_REQUEST)
             operations = bulk_request.operations or []
             # RFC7644 §3.7.4: "If either limit is exceeded, the service
             # provider MUST return HTTP response code 413 (Payload Too
@@ -607,7 +624,9 @@ class SCIM2:
                 ):
                     break
 
-            response = BulkResponse[self._resource_union()](operations=results)
+            response = _parametrize(BulkResponse, self._resource_union())(
+                operations=results
+            )
             return response.model_dump(scim_ctx=Context.BULK_RESPONSE)
 
     # -- Request checks ----------------------------------------------
@@ -713,7 +732,7 @@ class SCIM2:
         includes the resource's endpoint MUST be returned for all operations
         except for failed POST operations (which have no location)."
         """
-        path = operation.path
+        path = cast(str, operation.path)
         endpoint, _, resource_id = path.rpartition("/")
         resource_type = self._resource_type_at(endpoint)
         if resource_type is None:
@@ -731,10 +750,13 @@ class SCIM2:
 
         try:
             if operation.method == BulkOperation.Method.post:
-                resource_type = self._resource_type_at(operation.path)
+                path = cast(str, operation.path)
+                resource_type = self._resource_type_at(path)
                 if resource_type is None:
-                    raise NotFoundException(detail=f"No endpoint at {operation.path!r}")
-                created = self.storage.create(resource_type, operation.data)
+                    raise NotFoundException(detail=f"No endpoint at {path!r}")
+                created = self.storage.create(
+                    resource_type, cast(Resource[Any], operation.data)
+                )
                 meta = self._with_meta(resource_type, created)
                 operation.status = HTTPStatus.CREATED
                 operation.location = meta.location
@@ -743,7 +765,10 @@ class SCIM2:
             elif operation.method == BulkOperation.Method.put:
                 resource_type, resource_id = self._locate_bulk_resource(operation)
                 replaced = self._replace(
-                    resource_type, resource_id, operation.data, if_match
+                    resource_type,
+                    resource_id,
+                    cast(Resource[Any], operation.data),
+                    if_match,
                 )
                 operation.status = HTTPStatus.OK
                 operation.version = self._with_meta(resource_type, replaced).version
@@ -751,7 +776,10 @@ class SCIM2:
             elif operation.method == BulkOperation.Method.patch:
                 resource_type, resource_id = self._locate_bulk_resource(operation)
                 patched = self._patch(
-                    resource_type, resource_id, operation.data, if_match
+                    resource_type,
+                    resource_id,
+                    cast("PatchOp[Any]", operation.data),
+                    if_match,
                 )
                 operation.status = HTTPStatus.OK
                 operation.version = self._with_meta(resource_type, patched).version
@@ -785,7 +813,7 @@ class SCIM2:
         resource: Resource[Any],
         dump_kwargs: dict[str, Any],
         status: int = HTTPStatus.OK,
-    ) -> Response:
+    ) -> WerkzeugResponse:
         """Build a single-resource response.
 
         RFC7643 §3.1: "location The URI of the resource being returned. This
