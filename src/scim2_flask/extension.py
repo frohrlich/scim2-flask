@@ -9,6 +9,7 @@ from typing import cast
 from flask import Blueprint
 from flask import Flask
 from flask import Response
+from flask import current_app
 from flask import g
 from flask import jsonify
 from flask import request
@@ -40,9 +41,11 @@ from scim2_models import Sort
 from werkzeug.datastructures import ETags
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import MethodNotAllowed
 from werkzeug.exceptions import NotFound
 from werkzeug.exceptions import NotImplemented as HTTPNotImplemented
 from werkzeug.http import parse_etags
+from werkzeug.routing import MapAdapter
 
 from .storage import ScimStorage
 
@@ -209,6 +212,16 @@ class SCIM2:
         )
 
         def not_found_view(_path: str) -> Any:
+            # This route also catches the methods another route does not
+            # support, which Werkzeug would otherwise answer with a 405.
+            adapter = cast(MapAdapter, current_app.create_url_adapter(request))
+            allowed = [
+                method
+                for method in ("GET", "POST", "PUT", "PATCH", "DELETE")
+                if adapter.match(method=method)[0] != request.endpoint
+            ]
+            if allowed:
+                raise MethodNotAllowed(valid_methods=allowed)
             raise NotFound()
 
         blueprint.add_url_rule(
